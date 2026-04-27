@@ -58,6 +58,16 @@ Files we might have Yellow-zone modifications in (run the audit in step 5):
 - `packages/opencode/src/index.ts`, `packages/opencode/src/cli/cmd/temporary.ts` — `scriptName("bcode")` instead of `"opencode"`
 - USER_AGENT sites, banner (`ui.ts`, `logo.ts`), mDNS domain
 
+### 3a. Re-delete upstream-only workflows
+
+Upstream ships 32 workflows we deleted in PR #14 (Discord webhooks, marketplace publishing, SaaS deploy, OPENCODE_API_KEY-gated automation, community moderation, Nix flake, upstream test surface). The merge will reintroduce them. Re-delete:
+
+```sh
+rm -f .github/workflows/{beta,close-issues,close-stale-prs,compliance-close,containers,daily-issues-recap,daily-pr-recap,deploy,docs-locale-sync,docs-update,duplicate-issues,generate,nix-eval,nix-hashes,notify-discord,opencode,pr-management,pr-standards,publish,publish-github-action,publish-vscode,release-github-action,review,stats,storybook,sync-zed-extension,test,triage,vouch-check-issue,vouch-check-pr,vouch-manage-by-issue}.yml
+```
+
+Keepers: `release.yml` (ours) and `typecheck.yml` (retargeted to `main`). If upstream adds a new workflow file we haven't classified yet, leave it on disk and flag it in the PR body for human review.
+
 ### 4. Regenerate lockfile and verify
 
 ```sh

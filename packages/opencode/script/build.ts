@@ -166,14 +166,15 @@ const targets = singleFlag
 
 await $`rm -rf dist`
 
-const binaries: Record<string, string> = {}
+const binaries: Record<string, { version: string; assetName: string }> = {}
 if (!skipInstall) {
   await $`bun install --os="*" --cpu="*" @opentui/core@${pkg.dependencies["@opentui/core"]}`
   await $`bun install --os="*" --cpu="*" @parcel/watcher@${pkg.dependencies["@parcel/watcher"]}`
 }
 for (const item of targets) {
-  const name = [
-    pkg.name,
+  // suffix shared by both: @browser-use/browsercode-core-<os>-<arch>... (npm package name)
+  // and          bcode-<os>-<arch>...                    (release-asset name)
+  const targetSuffix = [
     // changing to win32 flags npm for some reason
     item.os === "win32" ? "windows" : item.os,
     item.arch,
@@ -182,7 +183,9 @@ for (const item of targets) {
   ]
     .filter(Boolean)
     .join("-")
-  console.log(`building ${name}`)
+  const name = `${pkg.name}-${targetSuffix}` // dist subdir + npm package id
+  const assetName = `bcode-${targetSuffix}` // release archive basename
+  console.log(`building ${name} → ${assetName}`)
   await $`mkdir -p dist/${name}/bin`
 
   const localPath = path.resolve(dir, "node_modules/@opentui/core/parser.worker.js")
@@ -259,18 +262,19 @@ for (const item of targets) {
       2,
     ),
   )
-  binaries[name] = Script.version
+  binaries[name] = { version: Script.version, assetName }
 }
 
 if (Script.release) {
-  for (const key of Object.keys(binaries)) {
+  for (const [key, info] of Object.entries(binaries)) {
+    // archive at dist/<assetName>.{tar.gz,zip} so `gh release upload ./dist/bcode-*` finds clean basenames.
     if (key.includes("linux")) {
-      await $`tar -czf ../../${key}.tar.gz *`.cwd(`dist/${key}/bin`)
+      await $`tar -czf ../../../${info.assetName}.tar.gz *`.cwd(`dist/${key}/bin`)
     } else {
-      await $`zip -r ../../${key}.zip *`.cwd(`dist/${key}/bin`)
+      await $`zip -r ../../../${info.assetName}.zip *`.cwd(`dist/${key}/bin`)
     }
   }
-  await $`gh release upload v${Script.version} ./dist/*.zip ./dist/*.tar.gz --clobber --repo ${process.env.GH_REPO}`
+  await $`gh release upload v${Script.version} ./dist/bcode-*.tar.gz ./dist/bcode-*.zip --clobber --repo ${process.env.GH_REPO}`
 }
 
 export { binaries }

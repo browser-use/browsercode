@@ -1,0 +1,101 @@
+name: release
+
+# Build the bcode CLI for every platform we ship and attach the archives to
+# the GitHub Release matching the pushed tag.
+#
+# Trigger:
+#   - Push a tag matching `v*` (e.g. `v0.0.3`).
+#
+# Behaviour:
+#   1. Reuses the existing `packages/opencode/script/build.ts` matrix
+#      (linux x64/arm64, darwin x64/arm64, win32 x64/arm64; baseline + musl
+#      variants where applicable).
+#   2. Bun cross-compiles every target from a single Linux runner.
+#   3. With `OPENCODE_RELEASE=1`, `build.ts` archives each target as
+#      `dist/bcode-<os>-<arch>...{.tar.gz,.zip}` and uploads via `gh release
+#      upload --clobber`.
+#
+# Pre-condition: the tag must already have an existing GitHub Release
+# (created either manually with `gh release create vX.Y.Z` or by an upcoming
+# release-creation workflow). `--clobber` lets re-runs replace assets.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (must already exist as a Release)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    if: github.repository == 'browser-use/browsercode'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag + version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building tag=${TAG} version=${VERSION}"
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Ensure GitHub Release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # `build.ts` uploads via `gh release upload --clobber`, which requires
+          # the release to already exist. Create as a prerelease if missing; the
+          # admin can promote/edit notes after assets land.
+          if ! gh release view "${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Creating prerelease ${{ steps.ver.outputs.tag }}"
+            gh release create "${{ steps.ver.outputs.tag }}" \
+              --prerelease \
+              --title "${{ steps.ver.outputs.tag }}" \
+              --notes "Automated build for ${{ steps.ver.outputs.tag }}. Notes pending."
+          else
+            echo "Release ${{ steps.ver.outputs.tag }} already exists."
+          fi
+
+      - name: Build all targets and upload to release
+        env:
+          OPENCODE_VERSION: ${{ steps.ver.outputs.version }}
+          OPENCODE_RELEASE: "1"
+          OPENCODE_CHANNEL: latest
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./packages/opencode/script/build.ts
+
+      - name: Summarise uploaded assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "## Release ${{ steps.ver.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          gh release view "${{ steps.ver.outputs.tag }}" --json assets \
+            --jq '.assets[] | "- " + .name + " (" + (.size|tostring) + " bytes)"' \
+            >> "$GITHUB_STEP_SUMMARY"

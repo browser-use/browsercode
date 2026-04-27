@@ -459,9 +459,10 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 echo -e ""
-echo -e "${MUTED}█▀▀▄ █▀▀ █▀▀█ █▀▀▄ █▀▀${NC}"
-echo -e "${MUTED}█▀▀▄ █░░ █░░█ █░░█ █▀▀${NC}"
-echo -e "${MUTED}▀▀▀░ ▀▀▀ ▀▀▀▀ ▀▀▀░ ▀▀▀${NC}"
+echo -e "${MUTED}▄⠀                                              ▄     ${NC}"
+echo -e "${MUTED}█▀▀█ █▀▀▄ █▀▀█ █  █ █▀▀▀ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█${NC}"
+echo -e "${MUTED}█  █ █    █  █ █▐▌█ ▀▀▀█ █▀▀▀ █    █    █  █ █  █ █▀▀▀${NC}"
+echo -e "${MUTED}▀▀▀▀ ▀    ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀    ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀${NC}"
 echo -e ""
 echo -e "${MUTED}BrowserCode ${NC}$specific_version${MUTED} installed to ${NC}$INSTALL_DIR/bcode"
 echo -e ""

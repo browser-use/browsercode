@@ -2,8 +2,9 @@ Execute Python code against a connected web browser via the BrowserCode harness.
 
 This is the single tool for all browser interaction. The agent writes Python that
 imperatively drives the browser using helpers preloaded into the script's namespace
-(`goto`, `click`, `type_text`, `screenshot`, `js`, `cdp`, `new_tab`, `switch_tab`,
-`wait_for_load`, `page_info`, `http_get`, etc.).
+(`goto_url`, `click_at_xy`, `type_text`, `capture_screenshot`, `js`, `cdp`,
+`new_tab`, `switch_tab`, `ensure_real_tab`, `wait_for_load`, `page_info`,
+`http_get`, etc.).
 
 Read `packages/bcode-browser/harness/SKILL.md` for the full helper surface and
 recommended workflow. Read `packages/bcode-browser/harness/src/browser_harness/helpers.py`
@@ -15,14 +16,17 @@ browser. Add task-specific helpers to
 `packages/bcode-browser/harness/agent-workspace/agent_helpers.py` between calls;
 they take effect on the very next call.
 
-Coordinate-based interaction is the default — `click(x, y)` rather than selector
-indices. `Input.dispatchMouseEvent` passes through iframes, shadow DOM, and
-cross-origin at the compositor level.
+Coordinate-based interaction is the default — `click_at_xy(x, y)` rather than
+selector indices. `Input.dispatchMouseEvent` passes through iframes, shadow DOM,
+and cross-origin at the compositor level.
+
+For first navigation use `new_tab(url)` (or `ensure_real_tab(); goto_url(url)`),
+not bare `goto_url` — the latter clobbers whatever tab the user is on.
 
 Output is whatever the script writes to stdout/stderr. Wrap multi-step flows in
 one call when possible — that's the design.
 
 Example:
-  goto("https://example.com")
+  new_tab("https://example.com")
   wait_for_load()
   print(page_info())

@@ -18,14 +18,22 @@ import { OpenCodeLaminarSpanProcessor } from "./processor"
 import { startTurnSpan } from "./span"
 import { sessionCurrentTurnSpan, subagentSessionIds } from "./state"
 
+const DEFAULT_GRPC_PORT_LMNR = 8443
+const DEFAULT_GRPC_PORT_GENERIC = 443
+
+const parsePort = (raw: string | undefined, fallback: number): number => {
+  if (!raw) return fallback
+  const n = Number(raw)
+  return Number.isInteger(n) && n > 0 && n <= 65535 ? n : fallback
+}
+
 export const LaminarPlugin: Plugin = ({ client }) => {
   const projectApiKey = process.env.LMNR_PROJECT_API_KEY
   const baseUrl = process.env.LMNR_BASE_URL ?? "https://api.lmnr.ai"
-  const port = process.env.LMNR_GRPC_PORT
-    ? Number(process.env.LMNR_GRPC_PORT)
-    : baseUrl === "https://api.lmnr.ai"
-      ? 8443
-      : 443
+  const port = parsePort(
+    process.env.LMNR_GRPC_PORT,
+    baseUrl === "https://api.lmnr.ai" ? DEFAULT_GRPC_PORT_LMNR : DEFAULT_GRPC_PORT_GENERIC,
+  )
 
   const log = (level: "debug" | "info" | "warn" | "error", message: string) => {
     client.app
@@ -64,9 +72,19 @@ export const LaminarPlugin: Plugin = ({ client }) => {
           await processor.forceFlush()
           break
         }
-        case "server.instance.disposed":
-          await processor.shutdown()
+        case "server.instance.disposed": {
+          // End any turn spans still open so they're flushed before shutdown.
+          for (const [sessionId, span] of Object.entries(sessionCurrentTurnSpan)) {
+            span.end()
+            delete sessionCurrentTurnSpan[sessionId]
+          }
+          for (const key of Object.keys(subagentSessionIds)) delete subagentSessionIds[key]
+          // sdk.shutdown() drains the inner BatchSpanProcessor and exporter
+          // and removes the global TracerProvider; explicit processor.shutdown()
+          // is redundant but harmless.
+          await sdk.shutdown().catch(() => {})
           break
+        }
         case "session.created":
         case "session.updated":
           if (event.properties.info.parentID) {

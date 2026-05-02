@@ -165,7 +165,9 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
     const spanId = span.spanContext().spanId
     this.spanIdLists.delete(spanId)
     this.spanIdToPath.delete(spanId)
-    delete this.spawningSpanIdToToolUseId[spanId]
+    // spawningSpanIdToToolUseId is keyed by UUID (matches `lmnr.span.ids_path`
+    // entries that the descendant scan iterates), not by the raw hex span id.
+    delete this.spawningSpanIdToToolUseId[otelSpanIdToUUID(spanId)]
     makeSpanOtelV2Compatible(span)
     this.inner.onEnd(span)
   }

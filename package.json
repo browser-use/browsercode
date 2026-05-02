@@ -12,7 +12,7 @@
     "dev:console": "ulimit -n 10240 2>/dev/null; bun run --cwd packages/console/app dev",
     "dev:storybook": "bun --cwd packages/storybook storybook",
     "lint": "oxlint",
-    "typecheck": "bun turbo typecheck --filter='@browser-use/browsercode-core...' --filter='@browser-use/bcode-browser'",
+    "typecheck": "bun turbo typecheck --filter='@browser-use/browsercode-core...' --filter='@browser-use/bcode-browser' --filter='@browser-use/bcode-laminar'",
     "postinstall": "bun run --cwd packages/opencode fix-node-pty",
     "prepare": "husky",
     "random": "echo 'Random script'",

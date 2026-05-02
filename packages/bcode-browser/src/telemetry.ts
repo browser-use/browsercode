@@ -14,12 +14,20 @@
 //     wins; explicit empty string is respected as "no key please"), AND
 //   - the embedded default is non-empty.
 //
-// `applyTelemetryKey()` is invoked as a side effect on module import (last
-// statement of this file). Because `packages/opencode/src/index.ts` imports
-// this module before any other module that might consume the env var, the
-// gate is guaranteed to run before any downstream module-load code can
-// observe `LMNR_PROJECT_API_KEY` — sidestepping ESM static-import hoisting
-// entirely.
+// No `if (telemetryEnabled)` branches downstream — `@browser-use/bcode-laminar`
+// reads `LMNR_PROJECT_API_KEY` and initializes only when present, so the gate
+// here decides everything.
+//
+// `applyTelemetryKey()` is invoked as a side effect on module import (bottom
+// of this file). `packages/opencode/src/index.ts` imports this module before
+// any other import; ESM evaluates an imported module's side effects before
+// continuing to the next import, so the gate is unambiguously ordered before
+// any downstream module-load code that might read `LMNR_PROJECT_API_KEY` —
+// sidestepping the static-import hoisting concern.
+
+import { mkdirSync } from "fs"
+import { homedir } from "os"
+import { dirname, join } from "path"
 
 declare const BCODE_DEFAULT_LMNR_KEY: string
 
@@ -34,6 +42,35 @@ export const applyTelemetryKey = () => {
   // undeclared and a direct read throws ReferenceError.
   if (typeof BCODE_DEFAULT_LMNR_KEY === "undefined" || !BCODE_DEFAULT_LMNR_KEY) return
   process.env.LMNR_PROJECT_API_KEY = BCODE_DEFAULT_LMNR_KEY
+  showFirstRunNoticeOnce()
+}
+
+// Industry-standard short notice: one line stating what happens and how to
+// opt out. Prints once; subsequent launches stay quiet.
+//
+// Uses XDG_STATE_HOME / ~/.local/state on Linux, %LOCALAPPDATA% on Windows,
+// ~/Library/Application Support on macOS. Resolved without importing
+// @opencode-ai/core/global since this runs before that module loads.
+const showFirstRunNoticeOnce = () => {
+  const marker = join(stateDir(), "bcode", "telemetry-notice-shown")
+  if (Bun.file(marker).size > 0) return
+  process.stderr.write(
+    "BrowserCode sends anonymous usage traces. Set DO_NOT_TRACK=1 to opt out.\n",
+  )
+  try {
+    mkdirSync(dirname(marker), { recursive: true })
+  } catch {}
+  Bun.write(marker, "1\n").catch(() => {})
+}
+
+const stateDir = () => {
+  if (process.platform === "win32") {
+    return process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local")
+  }
+  if (process.platform === "darwin") {
+    return join(homedir(), "Library", "Application Support")
+  }
+  return process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state")
 }
 
 // Run as an import side effect: this module is imported as the very first

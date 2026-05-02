@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "version": "0.0.0",
+  "name": "@browser-use/bcode-laminar",
+  "description": "Vendored Laminar OpenCode tracing plugin (Apache-2.0)",
+  "type": "module",
+  "license": "Apache-2.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsgo --noEmit"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "workspace:*",
+    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/sdk-node": "0.214.0",
+    "@opentelemetry/sdk-trace-base": "2.6.1",
+    "@opentelemetry/core": "2.6.1",
+    "@opentelemetry/exporter-trace-otlp-grpc": "0.214.0",
+    "@grpc/grpc-js": "1.14.3"
+  },
+  "devDependencies": {
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:"
+  }
+}

@@ -98,6 +98,7 @@
     "@ai-sdk/xai": "3.0.82",
     "@aws-sdk/credential-providers": "3.993.0",
     "@browser-use/bcode-browser": "workspace:*",
+    "@browser-use/bcode-laminar": "workspace:*",
     "@clack/prompts": "1.0.0-alpha.1",
     "@effect/opentelemetry": "catalog:",
     "@effect/platform-node": "catalog:",

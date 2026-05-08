@@ -55,8 +55,9 @@ export type Parameters = Schema.Schema.Type<typeof parameters>
 
 export interface ExecuteContext {
   // Identifies the per-opencode-session CDP Session to bind into the snippet.
-  // Shared with `browser_open_cloud` via the SessionStore so a cloud-attach
-  // call's Session is driven by subsequent `browser_execute` calls.
+  // The same Session is reused across calls — the agent calls
+  // `session.connect(...)` in one snippet and subsequent snippets find the
+  // already-connected Session.
   readonly sessionID: string
   // Per-project workspace dir: <projectDir>/.bcode/agent-workspace/. Created
   // on first call. The agent reads/writes/edits .ts files here via the
@@ -97,8 +98,9 @@ const serialize = (v: unknown): string => {
 }
 
 // Snippet executor. The CDP Session is resolved per-call from `SessionStore`
-// keyed on `ctx.sessionID` so a Session attached via `browser_open_cloud` is
-// the same one a follow-up `browser_execute` drives.
+// keyed on `ctx.sessionID`. The agent connects with `await session.connect(...)`
+// in one snippet (Way 1 / Way 2 / Way 3 in BROWSER.md); the Session persists
+// for follow-up snippets in the same opencode session.
 //
 // `dataDir` is opencode's XDG_DATA_HOME for bcode (~/.local/share/bcode/ on
 // Linux/Mac). Compiled-mode skills are extracted to `<dataDir>/skills/` once

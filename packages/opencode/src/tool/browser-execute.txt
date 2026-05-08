@@ -1,14 +1,14 @@
 Execute JavaScript against a connected browser via the BrowserCode CDP harness.
 
-Use this tool whenever the task requires driving a real browser — automation, scraping, end-to-end testing, or interactive exploration. The snippet runs in-process with one persistent CDP `Session` object that survives across calls in the same opencode session.
+Use this tool whenever the task requires driving a real browser — automation, scraping, end-to-end testing, or interactive exploration. The snippet runs in-process with one persistent CDP `Session` object that survives across calls in the same opencode session. You connect once and drive many.
 
-Before the first `browser_execute` call of a session, you MUST read `{{SKILLS_DIR}}/BROWSER.md`. It defines the snippet model, the workspace pattern, the `session` API surface, and gotchas.
+Before the first `browser_execute` call of a session, you MUST read `{{SKILLS_DIR}}/BROWSER.md`. It defines the snippet model, the three connection methods (local user Chrome, isolated debug-port Chrome, Browser Use cloud browser), the workspace pattern, the `session` API surface, and gotchas. For cloud-browser specifics, also read `{{SKILLS_DIR}}/cloud-browser.md`.
 
 Snippet scope:
 
-- `session` — the live CDP `Session`. Domain methods follow `session.<Domain>.<method>(params)` and return Promises.
-- standard JS globals (`console.log` etc. stream back to the user).
+- `session` — the live CDP `Session`. You call `session.connect(...)` once at the start of your work; subsequent snippets reuse the same connection. Domain methods follow `session.<Domain>.<method>(params)` and return Promises.
+- standard JS globals (`console.log` etc. stream back to the user; `process.env` is available for reading `BROWSER_USE_API_KEY` etc.).
 
 Top-level `import` is not allowed inside a snippet. To reuse code across calls, save it as a `.ts` file under `./.bcode/agent-workspace/` (per-project, tracked-by-default in git) and `await import("/abs/path?t=" + Date.now())` it from a later snippet.
 
-For UI-mechanic recipes (dialogs, dropdowns, iframes, shadow DOM, uploads, scrolling, screenshots, …), `read` files under `{{SKILLS_DIR}}/interaction-skills/`. Skills are documentation; they document what to write, never what to import.
+For UI-mechanic recipes, list `{{SKILLS_DIR}}/interaction-skills/` to see all available topics, then `read` the relevant ones. Skills are documentation; they document what to write, never what to import.

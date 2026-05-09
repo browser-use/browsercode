@@ -2,12 +2,19 @@
 
 `session.Page.captureScreenshot` is your default discovery and verification tool.
 
+**Auto-attached.** Every successful `Page.captureScreenshot` made during a `browser_execute` call is automatically surfaced to you as an inline image attachment on the next turn — same channel the `read` tool uses for image files. You don't need to decode the base64, save it, or `read` it back to see the image.
+
+The `data` field on the return value still carries the base64 string for the rare case where you want to process the image programmatically (OCR, diff against a previous shot, dimension extraction).
+
 ## Core calls
 
 ```js
 // Viewport only (default) — fastest, matches what the user sees
+await session.Page.captureScreenshot({ format: 'png' })
+// You'll see the image inline on the next turn. No write/read step needed.
+
+// If you do want the bytes (e.g. to write to disk yourself):
 const { data } = await session.Page.captureScreenshot({ format: 'png' })
-// Cross-platform temp dir: /tmp on Linux, /var/folders/… on macOS, %TEMP% on Windows
 const { tmpdir } = await import('node:os')
 await Bun.write(`${tmpdir()}/shot.png`, Buffer.from(data, 'base64'))
 

@@ -55,15 +55,30 @@ export const BrowserExecuteTool = Tool.define(
                 metadata: { output: preview(output) },
               }),
           })
+          // Drain every `Page.captureScreenshot` made during this snippet
+          // into `attachments[]`. Opencode appends FilePart attachments to
+          // the next assistant turn as image parts, so the model receives
+          // the screenshot natively as vision input — no decode/write/read
+          // dance from inside the snippet. Same channel `read` and
+          // `webfetch` use when they surface images.
+          const attachments = result.screenshots.map((s) => ({
+            type: "file" as const,
+            mime: s.mime,
+            url: `data:${s.mime};base64,${s.base64}`,
+          }))
           return {
             title: "browser_execute",
             output: [
               result.output.trimEnd(),
               result.result === "null" ? "" : `=> ${result.result}`,
+              attachments.length > 0
+                ? `(${attachments.length} screenshot${attachments.length === 1 ? "" : "s"} attached)`
+                : "",
             ]
               .filter(Boolean)
               .join("\n\n"),
             metadata: { result: result.result, output: preview(result.output) },
+            attachments,
           }
         }).pipe(Effect.orDie),
     }

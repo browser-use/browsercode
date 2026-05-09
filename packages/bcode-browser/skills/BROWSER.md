@@ -133,8 +133,11 @@ await session.Input.dispatchMouseEvent({ type: "mouseReleased", x, y, button: "l
 await session.Input.insertText({ text: "hello" })
 
 // Screenshot.
-const { data } = await session.Page.captureScreenshot({ format: "png" })
-// data is base64; write with the `write` tool or process in JS.
+await session.Page.captureScreenshot({ format: "png" })
+// You see the image inline on the next turn — `browser_execute` automatically
+// attaches every `Page.captureScreenshot` result. No need to decode, save, or
+// `read` the bytes back. The base64 is still in `data` (via the return value)
+// for the rare case you want to process it programmatically.
 ```
 
 For the full menu of UI mechanics — dropdowns, dialogs, iframes, shadow DOM, uploads, scrolling, screenshots-with-highlights — list `{{SKILLS_DIR}}/interaction-skills/` to see all available topics, then read the relevant one.

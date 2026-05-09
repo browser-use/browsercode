@@ -41,6 +41,7 @@
 // Level-2 hook in packages/opencode is a thin adapter.
 
 import fs from "fs/promises"
+import path from "path"
 import { Effect, Schema } from "effect"
 import { SessionStore } from "./session-store"
 import { Skills } from "./skills"
@@ -78,13 +79,43 @@ export interface ExecuteContext {
   readonly onChunk?: (output: string) => Effect.Effect<void>
 }
 
+// One screenshot collected during an execute() call. Drained into the
+// Level-2 wrapper's `attachments[]` so the agent sees the image inline on the
+// next assistant turn — no decode/write/read dance from inside the snippet.
+export interface CollectedScreenshot {
+  readonly mime: "image/png" | "image/jpeg" | "image/webp"
+  readonly base64: string
+}
+
 export interface ExecuteResult {
   readonly output: string
   // The snippet's `return` value, JSON-serialized when possible. `undefined`
   // serializes as `null` (JSON has no undefined). Non-serializable values
   // fall back to `String(v)`.
   readonly result: string
+  // Every successful `Page.captureScreenshot` made by the snippet, in the
+  // order the CDP responses came back. Empty when the snippet didn't take
+  // any screenshots.
+  readonly screenshots: readonly CollectedScreenshot[]
 }
+
+const SCREENSHOT_FORMAT_TO_MIME: Record<string, CollectedScreenshot["mime"]> = {
+  png: "image/png",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+}
+
+const SCREENSHOT_FORMAT_TO_EXT: Record<string, string> = {
+  png: "png",
+  jpeg: "jpg",
+  webp: "webp",
+}
+
+const screenshotMime = (format: unknown): CollectedScreenshot["mime"] =>
+  SCREENSHOT_FORMAT_TO_MIME[typeof format === "string" ? format : "png"] ?? "image/png"
+
+const screenshotExt = (format: unknown): string =>
+  SCREENSHOT_FORMAT_TO_EXT[typeof format === "string" ? format : "png"] ?? "png"
 
 // AsyncFunction is not a global — pull it off an async arrow's constructor.
 const AsyncFunction = (async () => {}).constructor as new (
@@ -145,12 +176,46 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
         debug: tee,
       })
 
+      // Screenshot tap. Subscribes to the Session's call-result stream for
+      // the duration of this execute() call; every successful
+      // `Page.captureScreenshot` is collected (drained into `attachments[]`
+      // by the Level-2 wrapper so the agent sees the image inline) and,
+      // when `BCODE_SCREENSHOT_DIR` is set, also written to disk for
+      // eval-judge consumption. Two consumers of one tap.
+      //
+      // Concurrency note: parallel execute() calls against the same Session
+      // (rare but possible — different sessionIDs share no Session, but a
+      // single sessionID with two in-flight tool calls would) each subscribe
+      // independently and would each see all screenshots produced during
+      // their lifetime. Acceptable for v1; opencode tool calls within one
+      // assistant message are serialized anyway.
+      const screenshots: CollectedScreenshot[] = []
+      const dumpDir = process.env.BCODE_SCREENSHOT_DIR
+      const startedAt = Date.now()
+      let seq = 0
+      const unsubscribe = session.onCallResult((method, params, result) => {
+        if (method !== "Page.captureScreenshot") return
+        const r = result as { data?: unknown }
+        if (typeof r?.data !== "string") return
+        const p = (params ?? {}) as { format?: unknown }
+        const mime = screenshotMime(p.format)
+        const ext = screenshotExt(p.format)
+        const idx = seq++
+        screenshots.push({ mime, base64: r.data })
+        if (dumpDir) {
+          const filename = `${ctx.sessionID}-${startedAt}-${String(idx).padStart(3, "0")}.${ext}`
+          fs.mkdir(dumpDir, { recursive: true })
+            .then(() => fs.writeFile(path.join(dumpDir, filename), Buffer.from(r.data as string, "base64")))
+            .catch(() => { /* eval-side dump is best-effort */ })
+        }
+      })
+
       const ran = yield* Effect.tryPromise({
         try: () => wrapped(session, snippetConsole),
         catch: (err) => new Error(`browser_execute snippet threw: ${err instanceof Error ? err.stack ?? err.message : String(err)}`),
-      })
+      }).pipe(Effect.ensuring(Effect.sync(() => unsubscribe())))
 
-      return { output, result: serialize(ran) } satisfies ExecuteResult
+      return { output, result: serialize(ran), screenshots } satisfies ExecuteResult
     }).pipe(
       Effect.scoped,
       Effect.timeoutOrElse({

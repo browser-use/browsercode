@@ -47,6 +47,7 @@ export class Session implements Transport {
   private pending = new Map<number, Pending>();
   private activeSessionId: string | undefined;
   private eventListeners: Array<(method: string, params: unknown, sessionId?: string) => void> = [];
+  private callResultListeners: Array<(method: string, params: unknown, result: unknown) => void> = [];
 
   // Generated bindings — one per CDP domain.
   // Initialized lazily after construction so `_call` is available.
@@ -170,6 +171,23 @@ export class Session implements Transport {
     };
   }
 
+  /**
+   * Subscribe to all successful CDP method results. Returns an unsubscribe fn.
+   * Fires after `_call` resolves; listener errors are swallowed.
+   *
+   * Used by `browser-execute` to collect `Page.captureScreenshot` outputs
+   * from inside an execute() call (drained into `attachments[]` so the agent
+   * sees the image inline; optionally also written to `BCODE_SCREENSHOT_DIR`
+   * for eval-judge consumption). Generic by design — keeps `Session`
+   * agnostic of any one method's semantics.
+   */
+  onCallResult(fn: (method: string, params: unknown, result: unknown) => void): () => void {
+    this.callResultListeners.push(fn);
+    return () => {
+      this.callResultListeners = this.callResultListeners.filter(x => x !== fn);
+    };
+  }
+
   /** Wait for the next event matching `method` (and optional predicate). */
   waitFor<T = unknown>(method: string, predicate?: (params: T) => boolean, timeoutMs = 30_000): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -198,7 +216,15 @@ export class Session implements Transport {
       msg.sessionId = this.activeSessionId;
     }
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, {
+        resolve: (v) => {
+          for (const fn of this.callResultListeners) {
+            try { fn(method, params, v); } catch { /* ignore */ }
+          }
+          resolve(v);
+        },
+        reject,
+      });
       this.ws!.send(JSON.stringify(msg));
     });
   }

@@ -113,6 +113,63 @@ test.skipIf(!enabled)("workspace import inside a snippet", async () => {
   expect(JSON.parse(result.result)).toBe("bcode-be")
 })
 
+test.skipIf(!enabled)("Page.captureScreenshot is collected into result.screenshots", async () => {
+  const result = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const impl = yield* BrowserExecute.make(dataDir)
+        return yield* impl.execute(
+          {
+            code: `await session.Page.enable();
+                   await session.Page.navigate({ url: "data:text/html,<title>shot</title><body>hi" });
+                   await session.waitFor("Page.loadEventFired", undefined, 5000);
+                   const a = await session.Page.captureScreenshot({ format: "png" });
+                   const b = await session.Page.captureScreenshot({ format: "jpeg", quality: 50 });
+                   return { aLen: a.data.length, bLen: b.data.length };`,
+          },
+          { sessionID, workspaceDir },
+        )
+      }),
+    ),
+  )
+  expect(result.screenshots).toHaveLength(2)
+  expect(result.screenshots[0]!.mime).toBe("image/png")
+  expect(result.screenshots[1]!.mime).toBe("image/jpeg")
+  // base64 must round-trip back to non-empty bytes for both shots.
+  expect(Buffer.from(result.screenshots[0]!.base64, "base64").length).toBeGreaterThan(0)
+  expect(Buffer.from(result.screenshots[1]!.base64, "base64").length).toBeGreaterThan(0)
+})
+
+test.skipIf(!enabled)("BCODE_SCREENSHOT_DIR dumps screenshots to disk", async () => {
+  const dump = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-shotdump-"))
+  const prev = process.env.BCODE_SCREENSHOT_DIR
+  process.env.BCODE_SCREENSHOT_DIR = dump
+  try {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const impl = yield* BrowserExecute.make(dataDir)
+          return yield* impl.execute(
+            {
+              code: `await session.Page.captureScreenshot({ format: "png" });`,
+            },
+            { sessionID, workspaceDir },
+          )
+        }),
+      ),
+    )
+    // Disk dump is fire-and-forget; give it a tick to land.
+    await new Promise((r) => setTimeout(r, 150))
+    const files = await fs.readdir(dump)
+    expect(files.length).toBeGreaterThan(0)
+    expect(files.every((f) => f.endsWith(".png"))).toBe(true)
+  } finally {
+    if (prev === undefined) delete process.env.BCODE_SCREENSHOT_DIR
+    else process.env.BCODE_SCREENSHOT_DIR = prev
+    await fs.rm(dump, { recursive: true, force: true })
+  }
+})
+
 test.skipIf(!enabled)("syntax error in snippet surfaces a clean failure", async () => {
   await expect(
     Effect.runPromise(

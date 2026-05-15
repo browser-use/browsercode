@@ -101,6 +101,7 @@ The agent will control a Browser Use Cloud browser and give you a link to watch 
 
 - Browser Use Cloud offers unlimited free browsers, limited to 3 concurrent sessions, with stealth, captcha solving, and proxies.
 - Just set `BROWSER_USE_API_KEY` in your environment. The agent can sign up completely autonomously; just ask it to. To upgrade further, go to [cloud.browser-use.com](https://cloud.browser-use.com).
+- For a long-lived Browser Use Cloud browser controlled from Telegram on your own VPS, see [Browser Use Box](https://browser-use.com/bux) and the [15-second demo](https://www.tiktok.com/@browser_use/video/7639824093721758989).
 
 ## Philosophy
 

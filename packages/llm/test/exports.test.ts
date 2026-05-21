@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test"
 import { LLM, LLMClient, Provider } from "@opencode-ai/llm"
 import { Route, Protocol } from "@opencode-ai/llm/route"
 import { Provider as ProviderSubpath } from "@opencode-ai/llm/provider"
-import { Cloudflare, OpenAI, OpenAICompatible, OpenRouter, XAI } from "@opencode-ai/llm/providers"
+import { Cloudflare, NearAI, OpenAI, OpenAICompatible, OpenRouter, XAI } from "@opencode-ai/llm/providers"
 import * as GitHubCopilot from "@opencode-ai/llm/providers/github-copilot"
+import * as NearAISubpath from "@opencode-ai/llm/providers/nearai"
 import { OpenAIChat, OpenAICompatibleChat, OpenAIResponses } from "@opencode-ai/llm/protocols"
 import * as AnthropicMessages from "@opencode-ai/llm/protocols/anthropic-messages"
 
@@ -31,6 +32,15 @@ describe("public exports", () => {
     expect(Cloudflare.provider.model).toBe(Cloudflare.model)
     expect(Cloudflare.aiGateway).toBeFunction()
     expect(Cloudflare.workersAI).toBeFunction()
+    expect(NearAI.model).toBeFunction()
+    expect(NearAI.provider.model).toBe(NearAI.model)
+    expect(NearAI.apis.chat).toBe(NearAI.chat)
+    expect(NearAISubpath.model).toBe(NearAI.model)
+    expect(NearAI.model("nearai-test", { apiKey: "fixture" })).toMatchObject({
+      provider: "nearai",
+      route: "openai-compatible-chat",
+      baseURL: "https://cloud-api.near.ai/v1",
+    })
     expect(OpenRouter.model).toBeFunction()
     expect(OpenRouter.provider.model).toBe(OpenRouter.model)
     expect(XAI.model).toBeFunction()

@@ -21,6 +21,7 @@
     "./providers/cloudflare": "./src/providers/cloudflare.ts",
     "./providers/github-copilot": "./src/providers/github-copilot.ts",
     "./providers/google": "./src/providers/google.ts",
+    "./providers/nearai": "./src/providers/nearai.ts",
     "./providers/openai": "./src/providers/openai.ts",
     "./providers/openai-compatible": "./src/providers/openai-compatible.ts",
     "./providers/openai-compatible-profile": "./src/providers/openai-compatible-profile.ts",

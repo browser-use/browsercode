@@ -102,7 +102,15 @@ const model = Anthropic.model("claude-sonnet-4-6", {
 })
 ```
 
-Included providers: OpenAI, Anthropic, Google (Gemini), Amazon Bedrock, Azure OpenAI, Cloudflare, GitHub Copilot, OpenRouter, xAI, plus generic OpenAI-compatible helpers for DeepSeek, Cerebras, Groq, Fireworks, Together, etc.
+Included providers: OpenAI, Anthropic, Google (Gemini), Amazon Bedrock, Azure OpenAI, Cloudflare, GitHub Copilot, NEAR AI Cloud TEE inference, OpenRouter, xAI, plus generic OpenAI-compatible helpers for DeepSeek, Cerebras, Groq, Fireworks, Together, etc.
+
+NEAR AI Cloud uses the OpenAI-compatible chat route and reads `NEARAI_API_KEY` by default:
+
+```ts
+import { NearAI } from "@opencode-ai/llm/providers"
+
+const model = NearAI.model("<model-id>")
+```
 
 ## Provider options & HTTP overlays
 

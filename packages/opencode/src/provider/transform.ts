@@ -44,6 +44,11 @@ function sdkKey(npm: string): string | undefined {
       return "gateway"
     case "@openrouter/ai-sdk-provider":
       return "openrouter"
+    case "@ai-sdk/alibaba":
+      // Persisted messages store providerOptions under the stored providerID
+      // (e.g. "alibaba-cn"); remap to the SDK-expected "alibaba" namespace so
+      // cacheControl set in `applyCaching` survives a session reload.
+      return "alibaba"
     case "ai-gateway-provider":
       // ai-gateway-provider/unified wraps createOpenAICompatible({ name: "Unified" }),
       // and @ai-sdk/openai-compatible parses compatibleOptions from one of
@@ -338,6 +343,27 @@ function normalizeMessages(
   return msgs
 }
 
+// Detect models routed through DashScope (Alibaba Cloud Model Studio /
+// Bailian / Tongyi) regardless of which AI SDK package the catalog mapped
+// them to. opencode's snapshot today ships `alibaba`, `alibaba-cn`,
+// `alibaba-coding-plan(-cn)` etc. as `@ai-sdk/openai-compatible` pointing at
+// `https://dashscope[-intl].aliyuncs.com/compatible-mode/v1`, but the
+// upstream cache-control protocol is the same one `@ai-sdk/alibaba` speaks:
+// https://www.alibabacloud.com/help/zh/model-studio/context-cache .
+//
+// Without this check, `applyCaching` is skipped for DashScope users — every
+// turn re-sends the whole conversation at full price and the model looks far
+// more expensive than it actually is. (Bailian bills cached input at 10% of
+// the standard rate, cache writes at 125%, with a 5-minute TTL and a hard
+// cap of 4 markers per request — the same shape `applyCaching` already emits
+// for Anthropic, so the existing strategy carries over.)
+function isDashScopeRoutedModel(model: Provider.Model): boolean {
+  if (model.providerID.startsWith("alibaba")) return true
+  if (model.providerID === "dashscope" || model.providerID === "bailian") return true
+  if (model.api.npm === "@ai-sdk/alibaba") return true
+  return false
+}
+
 function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
   const system = msgs.filter((msg) => msg.role === "system").slice(0, 2)
   const final = msgs.filter((msg) => msg.role !== "system").slice(-2)
@@ -363,7 +389,27 @@ function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage
     },
   }
 
+  // DashScope requires `cache_control` on a content *block*, not on the
+  // message envelope. `@ai-sdk/openai-compatible` lifts each part's
+  // `providerOptions.openaiCompatible.*` onto the corresponding wire block
+  // (see vercel/ai `convert-to-openai-compatible-chat-messages.ts`), so the
+  // existing content-level path produces the exact wire shape Bailian
+  // documents — *if* the message has array content to attach a part to.
+  // System messages still arrive here as strings (see `session/llm.ts`
+  // line 152), so lift them into a single-block array first.
+  const requiresBlockLevel = isDashScopeRoutedModel(model)
+
   for (const msg of unique([...system, ...final])) {
+    if (requiresBlockLevel && typeof msg.content === "string" && msg.content.length > 0) {
+      // The AI SDK v3 ModelMessage union types system content as `string`, so
+      // assigning an array tripped tsc. The runtime accepts array content for
+      // every role we touch here (verified against `@ai-sdk/openai-compatible`'s
+      // `convert-to-openai-compatible-chat-messages.ts`, which passes
+      // `content` through verbatim for system and maps each part for
+      // user/assistant). Cast through `any` for the assignment only.
+      ;(msg as any).content = [{ type: "text", text: msg.content }]
+    }
+
     const useMessageLevelOptions =
       model.providerID === "anthropic" ||
       model.providerID.includes("bedrock") ||
@@ -438,7 +484,15 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
       model.id.includes("anthropic") ||
       model.id.includes("claude") ||
       model.api.npm === "@ai-sdk/anthropic" ||
-      model.api.npm === "@ai-sdk/alibaba") &&
+      model.api.npm === "@ai-sdk/alibaba" ||
+      // DashScope-routed models (qwen3-max, qwen3.6-*, qwen3-coder-plus,
+      // kimi-k2.5 on alibaba-cn, deepseek-v3.2 on alibaba-cn, …) all speak
+      // the same cache_control protocol as the native `@ai-sdk/alibaba`
+      // SDK even though the catalog wires them through
+      // `@ai-sdk/openai-compatible`. Without this branch, browser tasks on
+      // Qwen pay full price every turn — which is exactly the scenario
+      // README describes as "more expensive than Opus 4.7 without caching".
+      isDashScopeRoutedModel(model)) &&
     model.api.npm !== "@ai-sdk/gateway"
   ) {
     msgs = applyCaching(msgs, model)

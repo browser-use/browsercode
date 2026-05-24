@@ -12,7 +12,7 @@ import { ProviderTransform } from "@/provider/transform"
 // `@ai-sdk/alibaba` does
 // (https://www.alibabacloud.com/help/zh/model-studio/context-cache). Browser
 // agent loops therefore re-sent the full conversation every turn at full
-// price, making qwen3-max look more expensive than Opus 4.7.
+// price, making qwen3.7-max look more expensive than Opus 4.7.
 //
 // These tests pin three properties:
 //   1. The gate fires for every DashScope-routed providerID.
@@ -25,23 +25,29 @@ type AnyModel = Parameters<typeof ProviderTransform.message>[1]
 
 const dashscopeOpenAICompatibleModel = (overrides: Partial<any> = {}): AnyModel =>
   ({
-    id: "alibaba-cn/qwen3-max",
+    id: "alibaba-cn/qwen3.7-max",
     providerID: "alibaba-cn",
     api: {
-      id: "qwen3-max",
+      id: "qwen3.7-max",
       url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
       npm: "@ai-sdk/openai-compatible",
     },
-    name: "Qwen3 Max",
+    name: "Qwen3.7 Max",
     capabilities: {
       temperature: true,
-      reasoning: false,
+      // qwen3.7-max returns reasoning_tokens by default per a live probe
+      // against dashscope.aliyuncs.com on 2026-05-24 — mirror the catalog
+      // convention for thinking models.
+      reasoning: true,
       attachment: false,
       toolcall: true,
       input: { text: true, audio: false, image: false, video: false, pdf: false },
       output: { text: true, audio: false, image: false, video: false, pdf: false },
       interleaved: false,
     },
+    // The cache gate is providerID-keyed and does not read cost, so these
+    // numbers are informational only — once qwen3.7-max lands in models.dev
+    // the snapshot will overwrite the catalog cost field anyway.
     cost: { input: 1.2, output: 6 },
     limit: { context: 262144, output: 65536 },
     status: "active",
@@ -93,7 +99,7 @@ describe("ProviderTransform.message - DashScope (alibaba-*) cache_control", () =
     const model = dashscopeOpenAICompatibleModel({
       providerID: "alibaba",
       api: {
-        id: "qwen3-max",
+        id: "qwen3.7-max",
         url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         npm: "@ai-sdk/openai-compatible",
       },
@@ -195,7 +201,7 @@ describe("ProviderTransform.message - DashScope (alibaba-*) cache_control", () =
   test("@ai-sdk/alibaba SDK path still works (defense in depth)", () => {
     const model = dashscopeOpenAICompatibleModel({
       api: {
-        id: "qwen3-max",
+        id: "qwen3.7-max",
         url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         npm: "@ai-sdk/alibaba",
       },
@@ -219,7 +225,7 @@ describe("ProviderTransform.message - DashScope (alibaba-*) cache_control", () =
     const model = dashscopeOpenAICompatibleModel({
       providerID: "vercel",
       api: {
-        id: "alibaba/qwen3-max",
+        id: "alibaba/qwen3.7-max",
         url: "https://ai-gateway.vercel.sh/v3/ai",
         npm: "@ai-sdk/gateway",
       },
@@ -272,7 +278,7 @@ describe("ProviderTransform.message - providerOptions key remap for @ai-sdk/alib
     // serialized options reach the provider plugin.
     const model = dashscopeOpenAICompatibleModel({
       api: {
-        id: "qwen3-max",
+        id: "qwen3.7-max",
         url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         npm: "@ai-sdk/alibaba",
       },

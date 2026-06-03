@@ -24,12 +24,16 @@ export const Parameters = Schema.Struct({
   }),
 })
 
-const WebSearchProviderSchema = Schema.Literals(["exa", "parallel"])
+const WebSearchProviderSchema = Schema.Literals(["exa", "parallel", "tavily"])
 export type WebSearchProvider = Schema.Schema.Type<typeof WebSearchProviderSchema>
 
-export function selectWebSearchProvider(sessionID: string, flags = { exa: false, parallel: false }): WebSearchProvider {
+export function selectWebSearchProvider(
+  sessionID: string,
+  flags = { exa: false, parallel: false, tavily: false },
+): WebSearchProvider {
   const override = process.env.OPENCODE_WEBSEARCH_PROVIDER
-  if (override === "exa" || override === "parallel") return override
+  if (override === "exa" || override === "parallel" || override === "tavily") return override
+  if (flags.tavily) return "tavily"
   if (flags.parallel) return "parallel"
   if (flags.exa) return "exa"
 
@@ -39,6 +43,7 @@ export function selectWebSearchProvider(sessionID: string, flags = { exa: false,
 export function webSearchProviderLabel(provider: unknown) {
   if (provider === "parallel") return "Parallel Web Search"
   if (provider === "exa") return "Exa Web Search"
+  if (provider === "tavily") return "Tavily Web Search"
   return "Web Search"
 }
 
@@ -63,6 +68,13 @@ function callProvider(
   params: Schema.Schema.Type<typeof Parameters>,
   ctx: Tool.Context,
 ) {
+  if (provider === "tavily") {
+    return McpWebSearch.callTavily(http, {
+      query: params.query,
+      max_results: params.numResults || 8,
+    })
+  }
+
   if (provider === "parallel") {
     return McpWebSearch.call(
       http,
@@ -112,6 +124,7 @@ export const WebSearchTool = Tool.define(
           const provider = selectWebSearchProvider(ctx.sessionID, {
             exa: flags.enableExa,
             parallel: flags.enableParallel,
+            tavily: flags.enableTavily,
           })
           const title = webSearchProviderLabel(provider)
           yield* ctx.metadata({ title: `${title} "${params.query}"`, metadata: { provider } })

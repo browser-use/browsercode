@@ -58,8 +58,8 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 
 const log = Log.create({ service: "tool.registry" })
 
-export function webSearchEnabled(providerID: ProviderID, flags = { exa: false, parallel: false }) {
-  return providerID === ProviderID.opencode || flags.exa || flags.parallel
+export function webSearchEnabled(providerID: ProviderID, flags = { exa: false, parallel: false, tavily: false }) {
+  return providerID === ProviderID.opencode || flags.exa || flags.parallel || flags.tavily
 }
 
 type TaskDef = Tool.InferDef<typeof TaskTool>
@@ -322,7 +322,7 @@ export const layer: Layer.Layer<
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
       const filtered = (yield* all()).filter((tool) => {
         if (tool.id === WebSearchTool.id) {
-          return webSearchEnabled(input.providerID, { exa: flags.enableExa, parallel: flags.enableParallel })
+          return webSearchEnabled(input.providerID, { exa: flags.enableExa, parallel: flags.enableParallel, tavily: flags.enableTavily })
         }
 
         const usePatch =

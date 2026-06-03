@@ -66,6 +66,53 @@ const McpRequest = <F extends Schema.Struct.Fields>(args: Schema.Struct<F>) =>
     }),
   })
 
+export const TAVILY_URL = "https://api.tavily.com/search"
+
+const TavilyResult = Schema.Struct({
+  results: Schema.Array(
+    Schema.Struct({
+      title: Schema.String,
+      url: Schema.String,
+      content: Schema.String,
+      score: Schema.Number,
+    }),
+  ),
+})
+
+const decodeTavily = Schema.decodeUnknownEffect(Schema.parseJson(TavilyResult))
+
+export const callTavily = (
+  http: HttpClient.HttpClient,
+  params: { query: string; max_results?: number },
+) =>
+  Effect.gen(function* () {
+    const apiKey = process.env.TAVILY_API_KEY
+    if (!apiKey) return yield* Effect.die(new Error("TAVILY_API_KEY is not set"))
+
+    const request = yield* HttpClientRequest.post(TAVILY_URL).pipe(
+      HttpClientRequest.accept("application/json"),
+      HttpClientRequest.setHeaders({ "Content-Type": "application/json" }),
+      HttpClientRequest.bodyJson({
+        query: params.query,
+        max_results: params.max_results ?? 8,
+        search_depth: "advanced",
+        api_key: apiKey,
+      }),
+    )
+    const response = yield* HttpClient.filterStatusOk(http)
+      .execute(request)
+      .pipe(
+        Effect.timeoutOrElse({
+          duration: "25 seconds",
+          orElse: () => Effect.die(new Error("Tavily search request timed out")),
+        }),
+      )
+    const body = yield* response.text
+    const data = yield* decodeTavily(body)
+    const texts = data.results.map((r) => `## ${r.title}\n${r.url}\n\n${r.content}`)
+    return texts.length > 0 ? texts.join("\n\n---\n\n") : undefined
+  })
+
 export const call = <F extends Schema.Struct.Fields>(
   http: HttpClient.HttpClient,
   url: string,

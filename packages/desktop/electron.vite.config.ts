@@ -39,6 +39,7 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: { index: "src/main/index.ts", sidecar: "src/main/sidecar.ts" },
+        external: ["bcode-skills.gen.ts"],
       },
       externalizeDeps: { include: [nodePtyPkg] },
     },

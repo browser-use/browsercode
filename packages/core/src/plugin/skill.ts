@@ -8,5 +8,5 @@ import { PluginV2 } from "../plugin"
 
 export const Plugin = define({
   id: PluginV2.ID.make("skill"),
-  effect: Effect.void,
+  effect: () => Effect.void,
 })

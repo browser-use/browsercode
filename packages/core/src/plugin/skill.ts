@@ -6,7 +6,7 @@ import { define } from "./internal"
 import { Effect } from "effect"
 import { PluginV2 } from "../plugin"
 
-export const Plugin = PluginV2.define({
+export const Plugin = define({
   id: PluginV2.ID.make("skill"),
   effect: Effect.void,
 })

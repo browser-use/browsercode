@@ -39,6 +39,12 @@ bcode run "On Google flights return all flight details from New York to SF tomor
 ### Connect an LLM
 
 <picture>
+  <source media="(prefers-color-scheme: light)" srcset="static/browsercode_best_models_light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="static/browsercode_best_models_dark.png">
+  <img alt="Best BrowserCode models on BU Bench" src="static/browsercode_best_models_light.png" width="100%">
+</picture>
+
+<picture>
   <source media="(prefers-color-scheme: light)" srcset="static/browser_harness_by_model_light.png">
   <source media="(prefers-color-scheme: dark)" srcset="static/browser_harness_by_model_dark.png">
   <img alt="Performance of LLMs with BrowserCode on BU Bench V1" src="static/browser_harness_by_model_light.png" width="100%">
@@ -48,11 +54,13 @@ BrowserCode supports any model you can reach with an API key, plus [every provid
 
 Use `/connect` in the TUI, or set provider API keys in your environment.
 
-Recommended models from current BrowserCode evals:
+Recommended models from current BU Bench evals:
 
-- Frontier: `claude-opus-4-7`, `gpt-5.5`
-- Value: `glm-5.1`, `mimo-v2.5-pro`
-- Budget: `gemini-3-flash-preview`
+- Best score: `claude-opus-4-7`
+- Best speed: `gpt-5.5`
+- Best open-weight: `glm-5.2`
+- Best value: `gemini-3.1-pro-preview`
+- Lowest cost: `minimax-m3`
 
 ### Connect a Browser
 

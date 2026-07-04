@@ -60,6 +60,16 @@ const model: Provider.Model = {
   headers: {},
   release_date: "2026-01-01",
 }
+const visionModel: Provider.Model = {
+  ...model,
+  capabilities: {
+    ...model.capabilities,
+    input: {
+      ...model.capabilities.input,
+      image: true,
+    },
+  },
+}
 
 function userInfo(id: string): SessionV1.User {
   return {
@@ -371,7 +381,7 @@ describe("session.message-v2.toModelMessage", () => {
       },
     ]
 
-    expect(await MessageV2.toModelMessages(input, model)).toStrictEqual([
+    expect(await MessageV2.toModelMessages(input, visionModel)).toStrictEqual([
       {
         role: "user",
         content: [{ type: "text", text: "run tool" }],

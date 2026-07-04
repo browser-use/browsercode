@@ -52,6 +52,22 @@ function truncateToolOutput(text: string, maxChars?: number) {
   return `${text.slice(0, maxChars)}\n[Tool output truncated for compaction: omitted ${omitted} chars]`
 }
 
+function mediaInputSupported(model: Provider.Model, mime: string) {
+  if (mime.startsWith("image/")) return model.capabilities.input.image
+  if (mime.startsWith("audio/")) return model.capabilities.input.audio
+  if (mime.startsWith("video/")) return model.capabilities.input.video
+  if (mime === "application/pdf") return model.capabilities.input.pdf
+  return true
+}
+
+function mediaOmittedNotice(tool: string, mime: string) {
+  if (tool === "browser_execute" && mime.startsWith("image/")) {
+    return "Screenshot was taken, but this model does not support image input."
+  }
+  if (mime.startsWith("image/")) return "Image omitted because this model does not support image input."
+  return "Media omitted because this model does not support this input type."
+}
+
 export const Event = {
   Updated: SessionV1.Event.MessageUpdated,
   Removed: SessionV1.Event.MessageRemoved,
@@ -294,23 +310,32 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
               ? "[Old tool result content cleared]"
               : truncateToolOutput(part.state.output, options?.toolOutputMaxChars)
             const attachments = part.state.time.compacted || options?.stripMedia ? [] : (part.state.attachments ?? [])
+            const omittedMediaNotices = Array.from(
+              new Set(
+                attachments
+                  .filter((a) => isMedia(a.mime) && !mediaInputSupported(model, a.mime))
+                  .map((a) => mediaOmittedNotice(part.tool, a.mime)),
+              ),
+            )
+            const modelAttachments = attachments.filter((a) => !isMedia(a.mime) || mediaInputSupported(model, a.mime))
+            const modelOutputText = [outputText, ...omittedMediaNotices].filter(Boolean).join("\n")
 
             // For providers that don't support media in tool results, extract media files
             // (images, PDFs) to be sent as a separate user message
-            const mediaAttachments = attachments.filter((a) => isMedia(a.mime))
+            const mediaAttachments = modelAttachments.filter((a) => isMedia(a.mime))
             const extractedMedia = mediaAttachments.filter((a) => !supportsMediaInToolResult(a))
             if (extractedMedia.length > 0) {
               media.push(...extractedMedia)
             }
-            const finalAttachments = attachments.filter((a) => !isMedia(a.mime) || supportsMediaInToolResult(a))
+            const finalAttachments = modelAttachments.filter((a) => !isMedia(a.mime) || supportsMediaInToolResult(a))
 
             const output =
               finalAttachments.length > 0
                 ? {
-                    text: outputText,
+                    text: modelOutputText,
                     attachments: finalAttachments,
                   }
-                : outputText
+                : modelOutputText
 
             assistantMessage.parts.push({
               type: ("tool-" + part.tool) as `tool-${string}`,

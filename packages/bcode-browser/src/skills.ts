@@ -46,17 +46,18 @@ const materialize = async (target: string): Promise<string> => {
   const embed = isCompiled ? await import("bcode-skills.gen.ts").catch(() => null) : null
   if (isCompiled && !embed) throw new Error("bcode-skills.gen.ts not found — was the build script updated?")
   const want = `${embed?.buildHash ?? "dev"}:${target}`
-  if (embed && (await Bun.file(path.join(target, SENTINEL)).text().catch(() => null)) === want) return target
+  if (embed && (await fs.readFile(path.join(target, SENTINEL), "utf8").catch(() => null)) === want) return target
 
-  const files = embed
-    ? await readEmbed(embed.default as Record<string, string>)
-    : await readDevSkills()
   await fs.mkdir(target, { recursive: true })
+  const map = embed
+    ? await readEmbed(embed.files)
+    : await readDevSkills()
+
   await Promise.all(
-    Object.entries(files).map(async ([rel, text]) => {
+    Object.entries(map).map(async ([rel, content]) => {
       const dest = path.join(target, rel)
       await fs.mkdir(path.dirname(dest), { recursive: true })
-      await fs.writeFile(dest, text.replaceAll("{{SKILLS_DIR}}", target), "utf8")
+      await fs.writeFile(dest, content.replaceAll("{{SKILLS_DIR}}", target), "utf8")
     }),
   )
   if (embed) await fs.writeFile(path.join(target, SENTINEL), want, "utf8")
@@ -65,11 +66,16 @@ const materialize = async (target: string): Promise<string> => {
 
 const readEmbed = async (map: Record<string, string>): Promise<Record<string, string>> =>
   Object.fromEntries(
-    await Promise.all(Object.entries(map).map(async ([rel, p]) => [rel, await Bun.file(p).text()])),
+    await Promise.all(Object.entries(map).map(async ([rel, p]) => [rel, await fs.readFile(p, "utf8")])),
   )
 
 const readDevSkills = async (): Promise<Record<string, string>> => {
-  const rels = await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: DEV_SKILLS_DIR }))
+  const all = await fs.readdir(DEV_SKILLS_DIR, { recursive: true })
+  const rels: string[] = []
+  for (const rel of all) {
+    const stat = await fs.stat(path.join(DEV_SKILLS_DIR, rel))
+    if (stat.isFile()) rels.push(rel)
+  }
   return Object.fromEntries(
     await Promise.all(
       rels.map(async (rel) => [

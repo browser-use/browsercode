@@ -2,6 +2,7 @@
 
 export * as SkillPlugin from "./skill"
 
+import { define } from "./internal"
 import { Effect } from "effect"
 import { PluginV2 } from "../plugin"
 

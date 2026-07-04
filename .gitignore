@@ -2,8 +2,7 @@
 node_modules
 .worktrees
 .sst
-.env
-.env.local
+.env*
 .idea
 .vscode
 .codex

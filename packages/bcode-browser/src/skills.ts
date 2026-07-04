@@ -16,12 +16,37 @@
 // separate invalidation step.
 
 import fs from "fs/promises"
+import fsSync from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isCompiled = __dirname.replaceAll("\\", "/").match(/^\/\$bunfs\/|^B:\/~BUN\//) !== null
-const DEV_SKILLS_DIR = path.resolve(__dirname, "..", "skills")
+
+const getDevSkillsDir = (): string => {
+  let curr = __dirname
+  for (let i = 0; i < 10; i++) {
+    const pkgPath = path.join(curr, "package.json")
+    if (fsSync.existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(fsSync.readFileSync(pkgPath, "utf8"))
+        if (pkg.name === "@browser-use/browsercode") {
+          return path.join(curr, "packages/bcode-browser/skills")
+        }
+      } catch (e) {}
+    }
+    const directPath = path.join(curr, "packages/bcode-browser/skills")
+    if (fsSync.existsSync(directPath)) {
+      return directPath
+    }
+    const parent = path.dirname(curr)
+    if (parent === curr) break
+    curr = parent
+  }
+  return path.resolve(__dirname, "..", "skills")
+}
+
+const DEV_SKILLS_DIR = getDevSkillsDir()
 const SENTINEL = ".bcode-build"
 
 // Static — the agent permission glob and the substituted placeholder both

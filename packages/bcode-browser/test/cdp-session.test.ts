@@ -128,7 +128,7 @@ test("waitFor ignores matching events from another attached session", async () =
   }
 })
 
-test("waitFor rejects invalid runtime arguments immediately", () => {
+test("waitFor and navigate reject invalid runtime arguments immediately", async () => {
   expect(() =>
     // @ts-expect-error Runtime callers can still pass invalid JavaScript.
     session.waitFor("Test.invalid-predicate", { predicate: "not a function" }),
@@ -136,4 +136,7 @@ test("waitFor rejects invalid runtime arguments immediately", () => {
   expect(() =>
     session.waitFor("Test.invalid-timeout", { timeoutMs: Number.NaN }),
   ).toThrow("waitFor timeoutMs must be a non-negative finite number")
+  await expect(
+    session.navigate("https://example.com", { timeoutMs: Number.POSITIVE_INFINITY }),
+  ).rejects.toThrow("navigate timeoutMs must be a non-negative finite number")
 })

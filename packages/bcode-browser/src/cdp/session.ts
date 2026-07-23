@@ -276,11 +276,15 @@ export class Session implements Transport {
    * Same-document and download navigations do not emit Page.loadEventFired.
    */
   async navigate(url: string, options: NavigateOptions = {}): Promise<Page.NavigateReturn> {
+    const timeoutMs = options.timeoutMs ?? 30_000;
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+      throw new TypeError('navigate timeoutMs must be a non-negative finite number');
+    }
     await this.domains.Page.enable();
     const waiter = this.createEventWaiter<unknown>(
       'Page.loadEventFired',
       undefined,
-      options.timeoutMs ?? 30_000,
+      timeoutMs,
       this.activeSessionId,
     );
     void waiter.promise.catch(() => {});

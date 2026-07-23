@@ -114,7 +114,7 @@ Common moves:
 
 ```js
 // Navigate.
-await session.navigate("https://example.com", { timeoutMs: 15_000 })
+await session.navigate("https://example.com")
 
 // Evaluate JS in the page.
 const r = await session.Runtime.evaluate({
@@ -150,7 +150,7 @@ Imports work at any depth; pick whatever layout makes the project easiest to nav
 export async function scrapeTitles(session: any, urls: string[]) {
   const titles: string[] = []
   for (const url of urls) {
-    await session.navigate(url, { timeoutMs: 15_000 })
+    await session.navigate(url)
     const r = await session.Runtime.evaluate({ expression: "document.title", returnByValue: true })
     titles.push(r.result.value)
   }

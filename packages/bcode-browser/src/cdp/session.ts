@@ -9,6 +9,7 @@
 import { bindDomains, type Domains, type Transport } from './generated.ts';
 
 type Pending = {
+  ws: WebSocket;
   resolve: (v: unknown) => void;
   reject: (e: unknown) => void;
 };
@@ -46,6 +47,7 @@ export class Session implements Transport {
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private activeSessionId: string | undefined;
+  private reattachPromise?: Promise<void>;
   private eventListeners: Array<(method: string, params: unknown, sessionId?: string) => void> = [];
   private callResultListeners: Array<(method: string, params: unknown, result: unknown) => void> = [];
 
@@ -124,15 +126,29 @@ export class Session implements Transport {
         else res();
       };
       const timer = setTimeout(() => finish(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
-      ws.addEventListener('open', () => finish());
+      ws.addEventListener('open', () => {
+        if (done) {
+          try { ws.close(); } catch { /* ignore */ }
+          return;
+        }
+        const previous = this.ws;
+        this.ws = ws;
+        this.activeSessionId = undefined;
+        finish();
+        if (previous && previous !== ws) {
+          try { previous.close(); } catch { /* ignore */ }
+        }
+      });
       ws.addEventListener('error', (e) => finish(new Error(`WS error: ${(e as any)?.message ?? 'connect failed (likely 403, permission not granted, or port closed)'}`)));
-      ws.addEventListener('message', (e) => this.onMessage(String(e.data)));
+      ws.addEventListener('message', (e) => this.onMessage(String(e.data), ws));
       ws.addEventListener('close', () => {
-        for (const [, p] of this.pending) p.reject(new Error('CDP socket closed'));
-        this.pending.clear();
+        this.rejectPending(ws, new Error('CDP socket closed'));
+        if (this.ws === ws) {
+          this.ws = undefined;
+          this.activeSessionId = undefined;
+        }
         finish(new Error('WS closed before open (likely 403 or port closed)'));
       });
-      this.ws = ws;
     });
   }
 
@@ -206,17 +222,36 @@ export class Session implements Transport {
   }
 
   // Transport implementation. Called by the generated domain bindings.
-  _call(method: string, params: unknown = {}): Promise<unknown> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+  async _call(method: string, params: unknown = {}): Promise<unknown> {
+    const browserLevel = isBrowserLevel(method);
+    const sentSessionId = browserLevel ? undefined : this.activeSessionId;
+    try {
+      return await this.send(method, params, sentSessionId);
+    } catch (error) {
+      if (!sentSessionId || !isMissingSessionError(error)) throw error;
+
+      // Chrome explicitly rejected the command before executing it, so this is
+      // safe to retry once. Socket drops are deliberately not retried: Chrome
+      // may have applied a click or submission before the response was lost.
+      if (this.activeSessionId === sentSessionId) this.activeSessionId = undefined;
+      if (!this.activeSessionId) await this.reattachFirstPage();
+      if (!this.activeSessionId) throw error;
+      return this.send(method, params, this.activeSessionId);
+    }
+  }
+
+  private send(method: string, params: unknown, sessionId?: string): Promise<unknown> {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error('Not connected. Call session.connect(...) first.'));
     }
+
     const id = this.nextId++;
     const msg: Record<string, unknown> = { id, method, params: params ?? {} };
-    if (this.activeSessionId && !isBrowserLevel(method)) {
-      msg.sessionId = this.activeSessionId;
-    }
+    if (sessionId) msg.sessionId = sessionId;
     return new Promise((resolve, reject) => {
       this.pending.set(id, {
+        ws,
         resolve: (v) => {
           for (const fn of this.callResultListeners) {
             try { fn(method, params, v); } catch { /* ignore */ }
@@ -225,16 +260,50 @@ export class Session implements Transport {
         },
         reject,
       });
-      this.ws!.send(JSON.stringify(msg));
+      try {
+        ws.send(JSON.stringify(msg));
+      } catch (error) {
+        this.pending.delete(id);
+        reject(error);
+      }
     });
   }
 
-  private onMessage(raw: string): void {
+  private async reattachFirstPage(): Promise<void> {
+    if (this.reattachPromise) return this.reattachPromise;
+
+    const attempt = this.attachFirstPage();
+    this.reattachPromise = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (this.reattachPromise === attempt) this.reattachPromise = undefined;
+    }
+  }
+
+  private async attachFirstPage(): Promise<void> {
+    const { targetInfos } = await this.domains.Target.getTargets({});
+    const pages = targetInfos as PageTarget[];
+    const targetId = pages.find(isUsablePageTarget)?.targetId
+      ?? (await this.domains.Target.createTarget({ url: 'about:blank' })).targetId;
+    await this.use(targetId);
+  }
+
+  private rejectPending(ws: WebSocket, error: Error): void {
+    for (const [id, pending] of this.pending) {
+      if (pending.ws !== ws) continue;
+      this.pending.delete(id);
+      pending.reject(error);
+    }
+  }
+
+  private onMessage(raw: string, ws: WebSocket): void {
+    if (ws !== this.ws) return;
     let m: any;
     try { m = JSON.parse(raw); } catch { return; }
     if (typeof m.id === 'number') {
       const p = this.pending.get(m.id);
-      if (!p) return;
+      if (!p || p.ws !== ws) return;
       this.pending.delete(m.id);
       if (m.error) p.reject(new CdpError(m.error.code, m.error.message, m.error.data));
       else p.resolve(m.result);
@@ -256,6 +325,12 @@ export class CdpError extends Error {
 /** Browser-level methods never take a sessionId. */
 function isBrowserLevel(method: string): boolean {
   return method.startsWith('Browser.') || method.startsWith('Target.');
+}
+
+function isMissingSessionError(error: unknown): boolean {
+  return error instanceof CdpError
+    && error.code === -32001
+    && error.message.includes('Session with given id not found');
 }
 
 /**
@@ -327,6 +402,15 @@ export async function listPageTargets(session: Session): Promise<PageTarget[]> {
   return (targetInfos as PageTarget[]).filter(
     t => t.type === 'page' && !t.url.startsWith('chrome://') && !t.url.startsWith('devtools://')
   );
+}
+
+function isUsablePageTarget(target: PageTarget): boolean {
+  return target.type === 'page'
+    && !target.url.startsWith('chrome://')
+    && !target.url.startsWith('chrome-untrusted://')
+    && !target.url.startsWith('devtools://')
+    && !target.url.startsWith('chrome-extension://')
+    && !target.url.startsWith('about:');
 }
 
 /**
@@ -423,4 +507,3 @@ async function tryReadDevToolsActivePort(
     return undefined;
   }
 }
-

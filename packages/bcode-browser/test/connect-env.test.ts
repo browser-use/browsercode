@@ -13,13 +13,16 @@ import { Session } from "../src/cdp/session"
 let versionRequests = 0
 let versionFailuresRemaining = 0
 let versionStatus = 200
+let versionDelayMs = 0
+let websocketDelayMs = 0
 let wsUrl = ""
 const server = Bun.serve({
   port: 0,
-  fetch(req, srv) {
+  async fetch(req, srv) {
     const path = new URL(req.url).pathname
     if (path === "/json/version") {
       versionRequests++
+      if (versionDelayMs > 0) await Bun.sleep(versionDelayMs)
       if (versionFailuresRemaining > 0) {
         versionFailuresRemaining--
         return new Response("starting", { status: 503 })
@@ -27,7 +30,10 @@ const server = Bun.serve({
       if (versionStatus !== 200) return new Response("blocked", { status: versionStatus })
       return Response.json({ webSocketDebuggerUrl: wsUrl })
     }
-    if (path === "/devtools/browser/test" && srv.upgrade(req)) return undefined
+    if (path === "/devtools/browser/test") {
+      if (websocketDelayMs > 0) await Bun.sleep(websocketDelayMs)
+      if (srv.upgrade(req)) return undefined
+    }
     return new Response("nope", { status: 400 })
   },
   websocket: {
@@ -99,6 +105,23 @@ test("BU_CDP_URL resolves an HTTP DevTools endpoint through /json/version", asyn
   })
 })
 
+test("BU_CDP_URL recognizes an uppercase HTTP scheme", async () => {
+  versionRequests = 0
+  await withEnv({
+    BU_CDP_WS: undefined,
+    BU_CDP_URL: `HTTP://127.0.0.1:${server.port}`,
+  }, async () => {
+    const session = new Session()
+    try {
+      await session.connect()
+      expect(session.isConnected()).toBe(true)
+      expect(versionRequests).toBe(1)
+    } finally {
+      session.close()
+    }
+  })
+})
+
 test("BU_CDP_URL retries while a DevTools HTTP endpoint starts", async () => {
   versionRequests = 0
   versionFailuresRemaining = 2
@@ -113,6 +136,26 @@ test("BU_CDP_URL retries while a DevTools HTTP endpoint starts", async () => {
       expect(versionRequests).toBe(3)
     } finally {
       versionFailuresRemaining = 0
+      session.close()
+    }
+  })
+})
+
+test("BU_CDP_URL discovery and WebSocket opening share one timeout", async () => {
+  versionDelayMs = 130
+  websocketDelayMs = 130
+  await withEnv({
+    BU_CDP_WS: undefined,
+    BU_CDP_URL: `http://127.0.0.1:${server.port}`,
+  }, async () => {
+    const session = new Session()
+    const started = performance.now()
+    try {
+      await expect(session.connect({ timeoutMs: 200 })).rejects.toThrow("timed out")
+      expect(performance.now() - started).toBeLessThan(270)
+    } finally {
+      versionDelayMs = 0
+      websocketDelayMs = 0
       session.close()
     }
   })

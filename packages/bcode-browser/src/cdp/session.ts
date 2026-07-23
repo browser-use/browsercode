@@ -93,10 +93,13 @@ export class Session implements Transport {
     }
     const envCdpUrl = process.env.BU_CDP_URL;
     if (envCdpUrl) {
-      const wsUrl = envCdpUrl.startsWith('http://') || envCdpUrl.startsWith('https://')
+      const deadline = Date.now() + timeoutMs;
+      const wsUrl = /^https?:\/\//i.test(envCdpUrl)
         ? await resolveHttpCdpUrl(envCdpUrl, timeoutMs)
         : envCdpUrl;
-      await this.openWs(wsUrl, timeoutMs);
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) throw new Error(`timed out after ${timeoutMs}ms`);
+      await this.openWs(wsUrl, remainingMs);
       return;
     }
     const browsers = await detectBrowsers();

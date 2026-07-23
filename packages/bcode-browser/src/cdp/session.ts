@@ -25,6 +25,13 @@ export type ConnectOptions = {
   timeoutMs?: number;
 };
 
+export type WaitForOptions<T> = {
+  /** Only resolve when the event payload matches this predicate. */
+  predicate?: (params: T) => boolean;
+  /** Maximum wait in ms. Default 30000. */
+  timeoutMs?: number;
+};
+
 /** A Chromium-based browser detected as running on this machine. */
 export type DetectedBrowser = {
   /** Short label, e.g. 'Google Chrome', 'Brave', 'Comet'. */
@@ -189,7 +196,30 @@ export class Session implements Transport {
   }
 
   /** Wait for the next event matching `method` (and optional predicate). */
-  waitFor<T = unknown>(method: string, predicate?: (params: T) => boolean, timeoutMs = 30_000): Promise<T> {
+  waitFor<T = unknown>(method: string, options?: WaitForOptions<T>): Promise<T>;
+  waitFor<T = unknown>(method: string, predicate?: (params: T) => boolean, timeoutMs?: number): Promise<T>;
+  waitFor<T = unknown>(
+    method: string,
+    predicateOrOptions?: ((params: T) => boolean) | WaitForOptions<T>,
+    positionalTimeoutMs?: number,
+  ): Promise<T> {
+    if (
+      predicateOrOptions !== undefined &&
+      typeof predicateOrOptions !== 'function' &&
+      (typeof predicateOrOptions !== 'object' || predicateOrOptions === null || Array.isArray(predicateOrOptions))
+    ) {
+      throw new TypeError('waitFor expects a predicate function or an options object');
+    }
+    const options = typeof predicateOrOptions === 'object' ? predicateOrOptions : undefined;
+    if (options?.predicate !== undefined && typeof options.predicate !== 'function') {
+      throw new TypeError('waitFor options.predicate must be a function');
+    }
+    const predicate = typeof predicateOrOptions === 'function' ? predicateOrOptions : options?.predicate;
+    const timeoutMs = options?.timeoutMs ?? positionalTimeoutMs ?? 30_000;
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+      throw new TypeError('waitFor timeoutMs must be a non-negative finite number');
+    }
+
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         unsub();
@@ -197,7 +227,14 @@ export class Session implements Transport {
       }, timeoutMs);
       const unsub = this.onEvent((m, params) => {
         if (m !== method) return;
-        if (predicate && !predicate(params as T)) return;
+        try {
+          if (predicate && !predicate(params as T)) return;
+        } catch (error) {
+          clearTimeout(timer);
+          unsub();
+          reject(error);
+          return;
+        }
         clearTimeout(timer);
         unsub();
         resolve(params as T);
@@ -423,4 +460,3 @@ async function tryReadDevToolsActivePort(
     return undefined;
   }
 }
-

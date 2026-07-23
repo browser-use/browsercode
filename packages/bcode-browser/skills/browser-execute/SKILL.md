@@ -115,8 +115,10 @@ Common moves:
 ```js
 // Navigate.
 await session.Page.enable()
-await session.Page.navigate({ url: "https://example.com" })
-await session.waitFor("Page.loadEventFired")
+const loaded = session.waitFor("Page.loadEventFired", { timeoutMs: 15_000 })
+const navigation = await session.Page.navigate({ url: "https://example.com" })
+if (navigation.errorText) throw new Error(`Navigation failed: ${navigation.errorText}`)
+await loaded
 
 // Evaluate JS in the page.
 const r = await session.Runtime.evaluate({
@@ -153,8 +155,10 @@ export async function scrapeTitles(session: any, urls: string[]) {
   const titles: string[] = []
   await session.Page.enable()
   for (const url of urls) {
-    await session.Page.navigate({ url })
-    await session.waitFor("Page.loadEventFired")
+    const loaded = session.waitFor("Page.loadEventFired", { timeoutMs: 15_000 })
+    const navigation = await session.Page.navigate({ url })
+    if (navigation.errorText) throw new Error(`Navigation failed: ${navigation.errorText}`)
+    await loaded
     const r = await session.Runtime.evaluate({ expression: "document.title", returnByValue: true })
     titles.push(r.result.value)
   }

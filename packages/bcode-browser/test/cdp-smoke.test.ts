@@ -32,8 +32,9 @@ test.skipIf(!enabled)("Session connects, navigates, reads title", async () => {
     }
 
     await session.domains.Page.enable()
+    const loaded = session.waitFor("Page.loadEventFired", { timeoutMs: 5000 })
     await session.domains.Page.navigate({ url: "data:text/html,<title>bcode-smoke</title>" })
-    await session.waitFor("Page.loadEventFired", undefined, 5000)
+    await loaded
 
     const r = (await session.domains.Runtime.evaluate({
       expression: "document.title",

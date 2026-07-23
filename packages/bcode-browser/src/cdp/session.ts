@@ -286,7 +286,12 @@ export class Session implements Transport {
     const pages = targetInfos as PageTarget[];
     const targetId = pages.find(isUsablePageTarget)?.targetId
       ?? (await this.domains.Target.createTarget({ url: 'about:blank' })).targetId;
-    await this.use(targetId);
+    const sessionId = await this.use(targetId);
+    await Promise.allSettled(
+      ['Page', 'DOM', 'Runtime', 'Network'].map(
+        domain => this.send(`${domain}.enable`, {}, sessionId),
+      ),
+    );
   }
 
   private rejectPending(ws: WebSocket, error: Error): void {

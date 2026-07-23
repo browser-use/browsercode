@@ -11,6 +11,7 @@ test("a missing page session is reattached once and the rejected command is retr
   let getTargetsCount = 0
   let staleCommandCount = 0
   const commandSessions: string[] = []
+  const enabledDomains: string[] = []
   const server = Bun.serve({
     port: 0,
     fetch(req, bunServer) {
@@ -34,6 +35,11 @@ test("a missing page session is reattached once and the rejected command is retr
               },
             }))
           }, 10)
+          return
+        }
+        if (["Page.enable", "DOM.enable", "Runtime.enable", "Network.enable"].includes(message.method)) {
+          enabledDomains.push(message.method)
+          socket.send(JSON.stringify({ id: message.id, result: {} }))
           return
         }
         if (message.method === "Runtime.evaluate") {
@@ -75,6 +81,7 @@ test("a missing page session is reattached once and the rejected command is retr
     expect(third.result.value).toBe("3")
     expect(attachCount).toBe(2)
     expect(getTargetsCount).toBe(1)
+    expect(enabledDomains).toEqual(["Page.enable", "DOM.enable", "Runtime.enable", "Network.enable"])
     expect(commandSessions).toEqual([
       "session-1",
       "session-1",
@@ -117,6 +124,10 @@ test("reattach creates a blank page when only internal targets remain", async ()
         if (message.method === "Target.createTarget") {
           createdTarget = message.params
           socket.send(JSON.stringify({ id: message.id, result: { targetId: "fresh-page" } }))
+          return
+        }
+        if (["Page.enable", "DOM.enable", "Runtime.enable", "Network.enable"].includes(message.method)) {
+          socket.send(JSON.stringify({ id: message.id, result: {} }))
           return
         }
         if (message.method === "Runtime.evaluate") {

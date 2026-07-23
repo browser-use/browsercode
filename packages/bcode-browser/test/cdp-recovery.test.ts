@@ -11,6 +11,7 @@ test("a missing page session is reattached once and the rejected command is retr
   let getTargetsCount = 0
   let staleCommandCount = 0
   const commandSessions: string[] = []
+  const attachedTargets: string[] = []
   const enabledDomains: string[] = []
   const server = Bun.serve({
     port: 0,
@@ -22,6 +23,7 @@ test("a missing page session is reattached once and the rejected command is retr
         const message = JSON.parse(String(raw))
         if (message.method === "Target.attachToTarget") {
           attachCount++
+          attachedTargets.push(message.params.targetId)
           socket.send(JSON.stringify({ id: message.id, result: { sessionId: `session-${attachCount}` } }))
           return
         }
@@ -31,7 +33,10 @@ test("a missing page session is reattached once and the rejected command is retr
             socket.send(JSON.stringify({
               id: message.id,
               result: {
-                targetInfos: [{ targetId: "page-1", title: "Page", type: "page", url: "https://example.com" }],
+                targetInfos: [
+                  { targetId: "other-page", title: "Other", type: "page", url: "https://other.example" },
+                  { targetId: "page-1", title: "Page", type: "page", url: "https://example.com" },
+                ],
               },
             }))
           }, 10)
@@ -81,6 +86,7 @@ test("a missing page session is reattached once and the rejected command is retr
     expect(second.result.value).toBe("2")
     expect(third.result.value).toBe("3")
     expect(attachCount).toBe(2)
+    expect(attachedTargets).toEqual(["page-1", "page-1"])
     expect(getTargetsCount).toBe(1)
     expect(enabledDomains).toEqual(["Debugger.enable", "Debugger.enable"])
     expect(commandSessions).toEqual([
@@ -229,9 +235,10 @@ test("reattach reuses an existing about:blank target", async () => {
   }
 })
 
-test("reattach creates a blank page when only internal targets remain", async () => {
+test("reattach creates a blank page instead of switching to another live target", async () => {
   let attachCount = 0
   let createdTarget: unknown
+  const attachedTargets: string[] = []
   const server = Bun.serve({
     port: 0,
     fetch(req, bunServer) {
@@ -242,6 +249,7 @@ test("reattach creates a blank page when only internal targets remain", async ()
         const message = JSON.parse(String(raw))
         if (message.method === "Target.attachToTarget") {
           attachCount++
+          attachedTargets.push(message.params.targetId)
           socket.send(JSON.stringify({ id: message.id, result: { sessionId: `session-${attachCount}` } }))
           return
         }
@@ -249,7 +257,10 @@ test("reattach creates a blank page when only internal targets remain", async ()
           socket.send(JSON.stringify({
             id: message.id,
             result: {
-              targetInfos: [{ targetId: "settings", title: "Settings", type: "page", url: "chrome://settings" }],
+              targetInfos: [
+                { targetId: "other-page", title: "Other", type: "page", url: "https://other.example" },
+                { targetId: "settings", title: "Settings", type: "page", url: "chrome://settings" },
+              ],
             },
           }))
           return
@@ -287,6 +298,7 @@ test("reattach creates a blank page when only internal targets remain", async ()
     expect(result.result.value).toBe(true)
     expect(createdTarget).toEqual({ url: "about:blank" })
     expect(attachCount).toBe(2)
+    expect(attachedTargets).toEqual(["old-page", "fresh-page"])
   } finally {
     session.close()
     server.stop(true)

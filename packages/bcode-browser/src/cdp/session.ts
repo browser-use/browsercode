@@ -47,6 +47,7 @@ export class Session implements Transport {
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private activeSessionId: string | undefined;
+  private activeTargetId: string | undefined;
   private reattachPromise?: Promise<void>;
   private enabledDomains = new Map<string, Map<string, unknown>>();
   private eventListeners: Array<(method: string, params: unknown, sessionId?: string) => void> = [];
@@ -135,6 +136,7 @@ export class Session implements Transport {
         const previous = this.ws;
         this.ws = ws;
         this.activeSessionId = undefined;
+        this.activeTargetId = undefined;
         this.enabledDomains.clear();
         finish();
         if (previous && previous !== ws) {
@@ -148,6 +150,7 @@ export class Session implements Transport {
         if (this.ws === ws) {
           this.ws = undefined;
           this.activeSessionId = undefined;
+          this.activeTargetId = undefined;
           this.enabledDomains.clear();
         }
         finish(new Error('WS closed before open (likely 403 or port closed)'));
@@ -170,12 +173,14 @@ export class Session implements Transport {
   async use(targetId: string): Promise<string> {
     const r = await this._call('Target.attachToTarget', { targetId, flatten: true }) as { sessionId: string };
     this.activeSessionId = r.sessionId;
+    this.activeTargetId = targetId;
     return r.sessionId;
   }
 
   /** Set the active sessionId directly (e.g. one you already attached). */
   setActiveSession(sessionId: string | undefined): void {
     this.activeSessionId = sessionId;
+    this.activeTargetId = undefined;
   }
 
   getActiveSession(): string | undefined {
@@ -228,6 +233,7 @@ export class Session implements Transport {
   async _call(method: string, params: unknown = {}): Promise<unknown> {
     const browserLevel = isBrowserLevel(method);
     const sentSessionId = browserLevel ? undefined : this.activeSessionId;
+    const sentTargetId = browserLevel ? undefined : this.activeTargetId;
     try {
       return await this.send(method, params, sentSessionId);
     } catch (error) {
@@ -236,7 +242,9 @@ export class Session implements Transport {
       // Chrome explicitly rejected the command before executing it, so this is
       // safe to retry once. Socket drops are deliberately not retried: Chrome
       // may have applied a click or submission before the response was lost.
-      if (this.activeSessionId === sentSessionId) await this.reattachFirstPage(sentSessionId);
+      if (this.activeSessionId === sentSessionId) {
+        await this.reattachPage(sentSessionId, sentTargetId);
+      }
       else if (this.reattachPromise) await this.reattachPromise;
       if (!this.activeSessionId || this.activeSessionId === sentSessionId) throw error;
       return this.send(method, params, this.activeSessionId);
@@ -273,10 +281,10 @@ export class Session implements Transport {
     });
   }
 
-  private async reattachFirstPage(staleSessionId: string): Promise<void> {
+  private async reattachPage(staleSessionId: string, staleTargetId?: string): Promise<void> {
     if (this.reattachPromise) return this.reattachPromise;
 
-    const attempt = this.attachFirstPage(staleSessionId);
+    const attempt = this.attachPage(staleSessionId, staleTargetId);
     this.reattachPromise = attempt;
     try {
       await attempt;
@@ -285,11 +293,15 @@ export class Session implements Transport {
     }
   }
 
-  private async attachFirstPage(staleSessionId: string): Promise<void> {
+  private async attachPage(staleSessionId: string, staleTargetId?: string): Promise<void> {
     const domainsToRestore = [...(this.enabledDomains.get(staleSessionId)?.entries() ?? [])];
     const { targetInfos } = await this.domains.Target.getTargets({});
     const pages = targetInfos as PageTarget[];
-    const targetId = pages.find(isUsablePageTarget)?.targetId
+    const exactTarget = staleTargetId
+      ? pages.find(target => target.type === 'page' && target.targetId === staleTargetId)
+      : undefined;
+    const targetId = exactTarget?.targetId
+      ?? (!staleTargetId ? pages.find(isUsablePageTarget)?.targetId : undefined)
       ?? (await this.domains.Target.createTarget({ url: 'about:blank' })).targetId;
     const sessionId = await this.use(targetId);
     await Promise.all(

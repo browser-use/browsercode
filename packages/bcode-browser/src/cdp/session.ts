@@ -48,6 +48,7 @@ export class Session implements Transport {
   private pending = new Map<number, Pending>();
   private activeSessionId: string | undefined;
   private reattachPromise?: Promise<void>;
+  private enabledDomains = new Map<string, Map<string, unknown>>();
   private eventListeners: Array<(method: string, params: unknown, sessionId?: string) => void> = [];
   private callResultListeners: Array<(method: string, params: unknown, result: unknown) => void> = [];
 
@@ -134,6 +135,7 @@ export class Session implements Transport {
         const previous = this.ws;
         this.ws = ws;
         this.activeSessionId = undefined;
+        this.enabledDomains.clear();
         finish();
         if (previous && previous !== ws) {
           try { previous.close(); } catch { /* ignore */ }
@@ -146,6 +148,7 @@ export class Session implements Transport {
         if (this.ws === ws) {
           this.ws = undefined;
           this.activeSessionId = undefined;
+          this.enabledDomains.clear();
         }
         finish(new Error('WS closed before open (likely 403 or port closed)'));
       });
@@ -233,9 +236,9 @@ export class Session implements Transport {
       // Chrome explicitly rejected the command before executing it, so this is
       // safe to retry once. Socket drops are deliberately not retried: Chrome
       // may have applied a click or submission before the response was lost.
-      if (this.activeSessionId === sentSessionId) this.activeSessionId = undefined;
-      if (!this.activeSessionId) await this.reattachFirstPage();
-      if (!this.activeSessionId) throw error;
+      if (this.activeSessionId === sentSessionId) await this.reattachFirstPage(sentSessionId);
+      else if (this.reattachPromise) await this.reattachPromise;
+      if (!this.activeSessionId || this.activeSessionId === sentSessionId) throw error;
       return this.send(method, params, this.activeSessionId);
     }
   }
@@ -253,6 +256,7 @@ export class Session implements Transport {
       this.pending.set(id, {
         ws,
         resolve: (v) => {
+          this.recordDomainState(method, params, sessionId);
           for (const fn of this.callResultListeners) {
             try { fn(method, params, v); } catch { /* ignore */ }
           }
@@ -269,10 +273,10 @@ export class Session implements Transport {
     });
   }
 
-  private async reattachFirstPage(): Promise<void> {
+  private async reattachFirstPage(staleSessionId: string): Promise<void> {
     if (this.reattachPromise) return this.reattachPromise;
 
-    const attempt = this.attachFirstPage();
+    const attempt = this.attachFirstPage(staleSessionId);
     this.reattachPromise = attempt;
     try {
       await attempt;
@@ -281,17 +285,32 @@ export class Session implements Transport {
     }
   }
 
-  private async attachFirstPage(): Promise<void> {
+  private async attachFirstPage(staleSessionId: string): Promise<void> {
+    const domainsToRestore = [...(this.enabledDomains.get(staleSessionId)?.entries() ?? [])];
     const { targetInfos } = await this.domains.Target.getTargets({});
     const pages = targetInfos as PageTarget[];
     const targetId = pages.find(isUsablePageTarget)?.targetId
       ?? (await this.domains.Target.createTarget({ url: 'about:blank' })).targetId;
     const sessionId = await this.use(targetId);
-    await Promise.allSettled(
-      ['Page', 'DOM', 'Runtime', 'Network'].map(
-        domain => this.send(`${domain}.enable`, {}, sessionId),
+    await Promise.all(
+      domainsToRestore.map(
+        ([method, params]) => this.send(method, params, sessionId),
       ),
     );
+    this.enabledDomains.delete(staleSessionId);
+  }
+
+  private recordDomainState(method: string, params: unknown, sessionId?: string): void {
+    if (!sessionId) return;
+    const match = /^([^.]+)\.(enable|disable)$/.exec(method);
+    if (!match) return;
+    const [, domain, command] = match;
+    if (!domain || !command) return;
+    const enabled = this.enabledDomains.get(sessionId) ?? new Map<string, unknown>();
+    if (command === 'enable') enabled.set(`${domain}.enable`, params);
+    else enabled.delete(`${domain}.enable`);
+    if (enabled.size > 0) this.enabledDomains.set(sessionId, enabled);
+    else this.enabledDomains.delete(sessionId);
   }
 
   private rejectPending(ws: WebSocket, error: Error): void {
@@ -415,7 +434,7 @@ function isUsablePageTarget(target: PageTarget): boolean {
     && !target.url.startsWith('chrome-untrusted://')
     && !target.url.startsWith('devtools://')
     && !target.url.startsWith('chrome-extension://')
-    && !target.url.startsWith('about:');
+    && (!target.url.startsWith('about:') || target.url === 'about:blank');
 }
 
 /**

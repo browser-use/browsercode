@@ -65,11 +65,12 @@ export class Session implements Transport {
    * Connect to Chrome's browser-level WebSocket.
    *
    * With no args, picks a browser in this precedence:
-   *   1. `BU_CDP_WS` / `BU_CDP_URL` env var — single fixed endpoint, used
-   *      by eval harnesses and CI to hand the agent a preconfigured browser.
-   *      If set, we connect there; failure does NOT fall through to scan
-   *      (the harness's intent is binding — silently using a different
-   *      browser is the worse failure mode).
+   *   1. `BU_CDP_WS` — fixed WebSocket endpoint. `BU_CDP_URL` — HTTP
+   *      DevTools endpoint resolved through `/json/version` (a WebSocket URL
+   *      is also accepted for backwards compatibility). These are used by
+   *      harnesses and CI to hand the agent a preconfigured browser. Failure
+   *      does NOT fall through to scan: silently using another browser would
+   *      violate the harness's intent.
    *   2. OS scan via `detectBrowsers()` — try each candidate
    *      (most-recently-launched first) until a WebSocket open succeeds.
    *      Each attempt has a short timeout so dead ports and 403s fail
@@ -85,9 +86,17 @@ export class Session implements Transport {
       await this.openWs(wsUrl, timeoutMs);
       return;
     }
-    const envWsUrl = process.env.BU_CDP_WS ?? process.env.BU_CDP_URL;
+    const envWsUrl = process.env.BU_CDP_WS;
     if (envWsUrl) {
       await this.openWs(envWsUrl, timeoutMs);
+      return;
+    }
+    const envCdpUrl = process.env.BU_CDP_URL;
+    if (envCdpUrl) {
+      const wsUrl = envCdpUrl.startsWith('http://') || envCdpUrl.startsWith('https://')
+        ? await resolveHttpCdpUrl(envCdpUrl, timeoutMs)
+        : envCdpUrl;
+      await this.openWs(wsUrl, timeoutMs);
       return;
     }
     const browsers = await detectBrowsers();
@@ -244,6 +253,40 @@ export class Session implements Transport {
       }
     }
   }
+}
+
+async function resolveHttpCdpUrl(baseUrl: string, timeoutMs: number): Promise<string> {
+  const endpoint = `${baseUrl.replace(/\/$/, '')}/json/version`;
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+
+  do {
+    try {
+      const remainingMs = Math.max(1, deadline - Date.now());
+      const response = await fetch(endpoint, {
+        signal: AbortSignal.timeout(Math.min(1_000, remainingMs)),
+      });
+      if (response.status === 403) {
+        throw new Error(
+          'permission-blocked: Chrome is reachable, but remote debugging permission was not granted',
+        );
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json() as { webSocketDebuggerUrl?: unknown };
+      if (typeof payload.webSocketDebuggerUrl !== 'string') {
+        throw new Error('missing webSocketDebuggerUrl');
+      }
+      return payload.webSocketDebuggerUrl;
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('permission-blocked:')) throw error;
+      lastError = error;
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs > 0) await Bun.sleep(Math.min(200, remainingMs));
+  } while (Date.now() < deadline);
+
+  throw new Error(`BU_CDP_URL=${baseUrl} unreachable after ${timeoutMs}ms: ${lastError}`);
 }
 
 export class CdpError extends Error {
@@ -423,4 +466,3 @@ async function tryReadDevToolsActivePort(
     return undefined;
   }
 }
-

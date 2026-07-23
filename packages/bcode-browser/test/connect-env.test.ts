@@ -10,10 +10,24 @@ import { Session } from "../src/cdp/session"
 
 // Tiny WS echo server. Accept the upgrade so `connect()` resolves; the
 // CDP protocol itself is never exercised in this test.
+let versionRequests = 0
+let versionFailuresRemaining = 0
+let versionStatus = 200
+let wsUrl = ""
 const server = Bun.serve({
   port: 0,
   fetch(req, srv) {
-    if (srv.upgrade(req)) return
+    const path = new URL(req.url).pathname
+    if (path === "/json/version") {
+      versionRequests++
+      if (versionFailuresRemaining > 0) {
+        versionFailuresRemaining--
+        return new Response("starting", { status: 503 })
+      }
+      if (versionStatus !== 200) return new Response("blocked", { status: versionStatus })
+      return Response.json({ webSocketDebuggerUrl: wsUrl })
+    }
+    if (path === "/devtools/browser/test" && srv.upgrade(req)) return undefined
     return new Response("nope", { status: 400 })
   },
   websocket: {
@@ -25,7 +39,7 @@ const server = Bun.serve({
 
 afterAll(() => server.stop(true))
 
-const wsUrl = `ws://127.0.0.1:${server.port}/`
+wsUrl = `ws://127.0.0.1:${server.port}/devtools/browser/test`
 
 const withEnv = async <T>(vars: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> => {
   const prev: Record<string, string | undefined> = {}
@@ -56,13 +70,67 @@ test("connect() with no args connects to BU_CDP_WS when set", async () => {
   })
 })
 
-test("connect() falls back to BU_CDP_URL when BU_CDP_WS is unset", async () => {
+test("BU_CDP_URL still accepts a WebSocket URL for compatibility", async () => {
   await withEnv({ BU_CDP_WS: undefined, BU_CDP_URL: wsUrl }, async () => {
     const session = new Session()
     try {
       await session.connect()
       expect(session.isConnected()).toBe(true)
     } finally {
+      session.close()
+    }
+  })
+})
+
+test("BU_CDP_URL resolves an HTTP DevTools endpoint through /json/version", async () => {
+  versionRequests = 0
+  await withEnv({
+    BU_CDP_WS: undefined,
+    BU_CDP_URL: `http://127.0.0.1:${server.port}`,
+  }, async () => {
+    const session = new Session()
+    try {
+      await session.connect()
+      expect(session.isConnected()).toBe(true)
+      expect(versionRequests).toBe(1)
+    } finally {
+      session.close()
+    }
+  })
+})
+
+test("BU_CDP_URL retries while a DevTools HTTP endpoint starts", async () => {
+  versionRequests = 0
+  versionFailuresRemaining = 2
+  await withEnv({
+    BU_CDP_WS: undefined,
+    BU_CDP_URL: `http://127.0.0.1:${server.port}`,
+  }, async () => {
+    const session = new Session()
+    try {
+      await session.connect({ timeoutMs: 1_000 })
+      expect(session.isConnected()).toBe(true)
+      expect(versionRequests).toBe(3)
+    } finally {
+      versionFailuresRemaining = 0
+      session.close()
+    }
+  })
+})
+
+test("BU_CDP_URL reports an HTTP permission block immediately", async () => {
+  versionRequests = 0
+  versionStatus = 403
+  await withEnv({
+    BU_CDP_WS: undefined,
+    BU_CDP_URL: `http://127.0.0.1:${server.port}`,
+  }, async () => {
+    const session = new Session()
+    try {
+      await expect(session.connect({ timeoutMs: 1_000 })).rejects.toThrow("permission-blocked")
+      expect(versionRequests).toBe(1)
+    } finally {
+      versionStatus = 200
       session.close()
     }
   })

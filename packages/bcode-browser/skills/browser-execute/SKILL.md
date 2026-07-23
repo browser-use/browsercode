@@ -114,11 +114,7 @@ Common moves:
 
 ```js
 // Navigate.
-await session.Page.enable()
-await Promise.all([
-  session.waitFor("Page.loadEventFired", { timeoutMs: 15_000 }),
-  session.Page.navigate({ url: "https://example.com" }),
-])
+await session.navigate("https://example.com", { timeoutMs: 15_000 })
 
 // Evaluate JS in the page.
 const r = await session.Runtime.evaluate({
@@ -153,12 +149,8 @@ Imports work at any depth; pick whatever layout makes the project easiest to nav
 // ./.bcode/agent-workspace/scrape_titles.ts (you write this with the `write` tool)
 export async function scrapeTitles(session: any, urls: string[]) {
   const titles: string[] = []
-  await session.Page.enable()
   for (const url of urls) {
-    await Promise.all([
-      session.waitFor("Page.loadEventFired", { timeoutMs: 15_000 }),
-      session.Page.navigate({ url }),
-    ])
+    await session.navigate(url, { timeoutMs: 15_000 })
     const r = await session.Runtime.evaluate({ expression: "document.title", returnByValue: true })
     titles.push(r.result.value)
   }

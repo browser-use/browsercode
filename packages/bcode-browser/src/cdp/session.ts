@@ -6,7 +6,7 @@
  * Target.sendMessageToTarget envelopes).
  */
 
-import { bindDomains, type Domains, type Transport } from './generated.ts';
+import { bindDomains, type Domains, type Page, type Transport } from './generated.ts';
 
 type Pending = {
   resolve: (v: unknown) => void;
@@ -29,6 +29,11 @@ export type WaitForOptions<T> = {
   /** Only resolve when the event payload matches this predicate. */
   predicate?: (params: T) => boolean;
   /** Maximum wait in ms. Default 30000. */
+  timeoutMs?: number;
+};
+
+export type NavigateOptions = {
+  /** Maximum wait for a cross-document load event in ms. Default 30000. */
   timeoutMs?: number;
 };
 
@@ -242,6 +247,20 @@ export class Session implements Transport {
         resolve(params as T);
       });
     });
+  }
+
+  /**
+   * Navigate the active page and wait for cross-document loads.
+   * Same-document and download navigations do not emit Page.loadEventFired.
+   */
+  async navigate(url: string, options: NavigateOptions = {}): Promise<Page.NavigateReturn> {
+    await this.domains.Page.enable();
+    const loaded = this.waitFor('Page.loadEventFired', { timeoutMs: options.timeoutMs });
+    void loaded.catch(() => {});
+    const navigation = await this.domains.Page.navigate({ url });
+    if (navigation.errorText) throw new Error(`Navigation failed: ${navigation.errorText}`);
+    if (navigation.loaderId && !navigation.isDownload) await loaded;
+    return navigation;
   }
 
   // Transport implementation. Called by the generated domain bindings.

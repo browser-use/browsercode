@@ -16,9 +16,28 @@ const server = Bun.serve({
       if (typeof message !== "object" || message === null) return
       const method = Reflect.get(message, "method")
       const id = Reflect.get(message, "id")
-      if (method !== "Page.navigate" || typeof id !== "number") return
+      if (typeof id !== "number") return
+      if (method === "Page.enable") {
+        ws.send(JSON.stringify({ id, result: {} }))
+        return
+      }
+      if (method !== "Page.navigate") return
+      const params = Reflect.get(message, "params")
+      const url = typeof params === "object" && params !== null ? Reflect.get(params, "url") : undefined
+      if (url === "https://example.com/#same-document") {
+        ws.send(JSON.stringify({ id, result: { frameId: "frame" } }))
+        return
+      }
+      if (url === "https://navigation-fails.example") {
+        ws.send(JSON.stringify({ id, result: { frameId: "frame", errorText: "net::ERR_FAILED" } }))
+        return
+      }
+      if (url === "https://download.example") {
+        ws.send(JSON.stringify({ id, result: { frameId: "frame", loaderId: "loader", isDownload: true } }))
+        return
+      }
       ws.send(JSON.stringify({ method: "Page.loadEventFired", params: { timestamp: 1 } }))
-      ws.send(JSON.stringify({ id, result: { frameId: "frame" } }))
+      ws.send(JSON.stringify({ id, result: { frameId: "frame", loaderId: "loader" } }))
     },
     close() {},
   },
@@ -77,11 +96,21 @@ test("waitFor retains the positional signature", async () => {
 })
 
 test("a waiter registered before navigation catches an event emitted before the navigation response", async () => {
-  const [loaded] = await Promise.all([
-    session.waitFor<{ timestamp: number }>("Page.loadEventFired", { timeoutMs: 1_000 }),
-    session.domains.Page.navigate({ url: "https://example.com" }),
-  ])
-  expect(loaded).toEqual({ timestamp: 1 })
+  const navigation = await session.navigate("https://example.com", { timeoutMs: 1_000 })
+  expect(navigation.loaderId).toBe("loader")
+})
+
+test("navigate does not wait for same-document loads or downloads", async () => {
+  const sameDocument = await session.navigate("https://example.com/#same-document", { timeoutMs: 20 })
+  const download = await session.navigate("https://download.example", { timeoutMs: 20 })
+  expect(sameDocument.loaderId).toBeUndefined()
+  expect(download.isDownload).toBe(true)
+})
+
+test("navigate surfaces Page.navigate errorText", async () => {
+  await expect(
+    session.navigate("https://navigation-fails.example", { timeoutMs: 20 }),
+  ).rejects.toThrow("Navigation failed: net::ERR_FAILED")
 })
 
 test("waitFor ignores matching events from another attached session", async () => {

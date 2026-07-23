@@ -86,11 +86,7 @@ test.skipIf(!enabled)("workspace import inside a snippet", async () => {
        } else {
          await session.use(page.targetId)
        }
-       await session.Page.enable()
-       await Promise.all([
-         session.waitFor("Page.loadEventFired", { timeoutMs: 5000 }),
-         session.Page.navigate({ url: "data:text/html,<title>bcode-be</title>" }),
-       ])
+       await session.navigate("data:text/html,<title>bcode-be</title>", { timeoutMs: 5000 })
        const r = await session.Runtime.evaluate({ expression: "document.title", returnByValue: true })
        return r.result.value
      }`,
@@ -126,11 +122,7 @@ test.skipIf(!enabled)("Page.captureScreenshot is collected into result.screensho
         return yield* impl.execute(
           {
             description: "Capture two screenshots",
-            code: `await session.Page.enable();
-                   await Promise.all([
-                     session.waitFor("Page.loadEventFired", { timeoutMs: 5000 }),
-                     session.Page.navigate({ url: "data:text/html,<title>shot</title><body>hi" }),
-                   ]);
+            code: `await session.navigate("data:text/html,<title>shot</title><body>hi", { timeoutMs: 5000 });
                    const a = await session.Page.captureScreenshot({ format: "png" });
                    const b = await session.Page.captureScreenshot({ format: "jpeg", quality: 50 });
                    return { aLen: a.data.length, bLen: b.data.length };`,

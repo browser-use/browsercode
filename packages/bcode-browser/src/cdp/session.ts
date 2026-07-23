@@ -216,6 +216,7 @@ export class Session implements Transport {
     }
     const predicate = typeof predicateOrOptions === 'function' ? predicateOrOptions : options?.predicate;
     const timeoutMs = options?.timeoutMs ?? positionalTimeoutMs ?? 30_000;
+    const sessionId = isBrowserLevel(method) ? undefined : this.activeSessionId;
     if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
       throw new TypeError('waitFor timeoutMs must be a non-negative finite number');
     }
@@ -225,8 +226,9 @@ export class Session implements Transport {
         unsub();
         reject(new Error(`Timeout waiting for ${method}`));
       }, timeoutMs);
-      const unsub = this.onEvent((m, params) => {
+      const unsub = this.onEvent((m, params, eventSessionId) => {
         if (m !== method) return;
+        if (sessionId !== undefined && eventSessionId !== sessionId) return;
         try {
           if (predicate && !predicate(params as T)) return;
         } catch (error) {

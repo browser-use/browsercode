@@ -17,6 +17,12 @@ const server = Bun.serve({
       const method = Reflect.get(message, "method")
       const id = Reflect.get(message, "id")
       if (method !== "Page.navigate" || typeof id !== "number") return
+      const params = Reflect.get(message, "params")
+      const url = typeof params === "object" && params !== null ? Reflect.get(params, "url") : undefined
+      if (url === "https://navigation-fails.example") {
+        ws.send(JSON.stringify({ id, result: { frameId: "frame", errorText: "net::ERR_FAILED" } }))
+        return
+      }
       ws.send(JSON.stringify({ method: "Page.loadEventFired", params: { timestamp: 1 } }))
       ws.send(JSON.stringify({ id, result: { frameId: "frame" } }))
     },
@@ -34,8 +40,8 @@ afterAll(() => {
   server.stop(true)
 })
 
-const emit = (method: string, params: unknown) => {
-  server.publish(channel, JSON.stringify({ method, params }))
+const emit = (method: string, params: unknown, sessionId?: string) => {
+  server.publish(channel, JSON.stringify({ method, params, sessionId }))
 }
 
 test("waitFor accepts predicate and timeout options", async () => {
@@ -80,6 +86,26 @@ test("a waiter registered before navigation catches an event emitted before the 
   const loaded = session.waitFor<{ timestamp: number }>("Page.loadEventFired", { timeoutMs: 1_000 })
   await session.domains.Page.navigate({ url: "https://example.com" })
   expect(await loaded).toEqual({ timestamp: 1 })
+})
+
+test("waitFor ignores matching events from another attached session", async () => {
+  session.setActiveSession("session-active")
+  try {
+    const waiting = session.waitFor<{ source: string }>("Page.loadEventFired", { timeoutMs: 1_000 })
+    emit("Page.loadEventFired", { source: "background" }, "session-background")
+    emit("Page.loadEventFired", { source: "active" }, "session-active")
+    expect(await waiting).toEqual({ source: "active" })
+  } finally {
+    session.setActiveSession(undefined)
+  }
+})
+
+test("navigation failure does not leave an unhandled waiter rejection", async () => {
+  const loaded = session.waitFor("Page.loadEventFired", { timeoutMs: 20 })
+  void loaded.catch(() => {})
+  const navigation = await session.domains.Page.navigate({ url: "https://navigation-fails.example" })
+  expect(navigation.errorText).toBe("net::ERR_FAILED")
+  await Bun.sleep(30)
 })
 
 test("waitFor rejects invalid runtime arguments immediately", () => {

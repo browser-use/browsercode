@@ -17,12 +17,6 @@ const server = Bun.serve({
       const method = Reflect.get(message, "method")
       const id = Reflect.get(message, "id")
       if (method !== "Page.navigate" || typeof id !== "number") return
-      const params = Reflect.get(message, "params")
-      const url = typeof params === "object" && params !== null ? Reflect.get(params, "url") : undefined
-      if (url === "https://navigation-fails.example") {
-        ws.send(JSON.stringify({ id, result: { frameId: "frame", errorText: "net::ERR_FAILED" } }))
-        return
-      }
       ws.send(JSON.stringify({ method: "Page.loadEventFired", params: { timestamp: 1 } }))
       ws.send(JSON.stringify({ id, result: { frameId: "frame" } }))
     },
@@ -83,9 +77,11 @@ test("waitFor retains the positional signature", async () => {
 })
 
 test("a waiter registered before navigation catches an event emitted before the navigation response", async () => {
-  const loaded = session.waitFor<{ timestamp: number }>("Page.loadEventFired", { timeoutMs: 1_000 })
-  await session.domains.Page.navigate({ url: "https://example.com" })
-  expect(await loaded).toEqual({ timestamp: 1 })
+  const [loaded] = await Promise.all([
+    session.waitFor<{ timestamp: number }>("Page.loadEventFired", { timeoutMs: 1_000 }),
+    session.domains.Page.navigate({ url: "https://example.com" }),
+  ])
+  expect(loaded).toEqual({ timestamp: 1 })
 })
 
 test("waitFor ignores matching events from another attached session", async () => {
@@ -98,14 +94,6 @@ test("waitFor ignores matching events from another attached session", async () =
   } finally {
     session.setActiveSession(undefined)
   }
-})
-
-test("navigation failure does not leave an unhandled waiter rejection", async () => {
-  const loaded = session.waitFor("Page.loadEventFired", { timeoutMs: 20 })
-  void loaded.catch(() => {})
-  const navigation = await session.domains.Page.navigate({ url: "https://navigation-fails.example" })
-  expect(navigation.errorText).toBe("net::ERR_FAILED")
-  await Bun.sleep(30)
 })
 
 test("waitFor rejects invalid runtime arguments immediately", () => {

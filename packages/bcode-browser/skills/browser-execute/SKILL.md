@@ -115,13 +115,10 @@ Common moves:
 ```js
 // Navigate.
 await session.Page.enable()
-const loaded = session.waitFor("Page.loadEventFired", { timeoutMs: 15_000 })
-// Keep the rejection observed if navigation itself fails before `await loaded`.
-void loaded.catch(() => {})
-const navigation = await session.Page.navigate({ url: "https://example.com" })
-if (navigation.errorText) throw new Error(`Navigation failed: ${navigation.errorText}`)
-// Same-document navigations have no loaderId and do not fire a new load event.
-if (navigation.loaderId) await loaded
+await Promise.all([
+  session.waitFor("Page.loadEventFired", { timeoutMs: 15_000 }),
+  session.Page.navigate({ url: "https://example.com" }),
+])
 
 // Evaluate JS in the page.
 const r = await session.Runtime.evaluate({
@@ -158,11 +155,10 @@ export async function scrapeTitles(session: any, urls: string[]) {
   const titles: string[] = []
   await session.Page.enable()
   for (const url of urls) {
-    const loaded = session.waitFor("Page.loadEventFired", { timeoutMs: 15_000 })
-    void loaded.catch(() => {})
-    const navigation = await session.Page.navigate({ url })
-    if (navigation.errorText) throw new Error(`Navigation failed: ${navigation.errorText}`)
-    if (navigation.loaderId) await loaded
+    await Promise.all([
+      session.waitFor("Page.loadEventFired", { timeoutMs: 15_000 }),
+      session.Page.navigate({ url }),
+    ])
     const r = await session.Runtime.evaluate({ expression: "document.title", returnByValue: true })
     titles.push(r.result.value)
   }

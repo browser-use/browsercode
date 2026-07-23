@@ -37,6 +37,11 @@ export type NavigateOptions = {
   timeoutMs?: number;
 };
 
+type EventWaiter<T> = {
+  promise: Promise<T>;
+  cancel: () => void;
+};
+
 /** A Chromium-based browser detected as running on this machine. */
 export type DetectedBrowser = {
   /** Short label, e.g. 'Google Chrome', 'Brave', 'Comet'. */
@@ -226,9 +231,26 @@ export class Session implements Transport {
       throw new TypeError('waitFor timeoutMs must be a non-negative finite number');
     }
 
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+    return this.createEventWaiter(method, predicate, timeoutMs, sessionId).promise;
+  }
+
+  private createEventWaiter<T>(
+    method: string,
+    predicate: ((params: T) => boolean) | undefined,
+    timeoutMs: number,
+    sessionId: string | undefined,
+  ): EventWaiter<T> {
+    let cancel = () => {};
+    const promise = new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         unsub();
+      };
+      const timer = setTimeout(() => {
+        cleanup();
         reject(new Error(`Timeout waiting for ${method}`));
       }, timeoutMs);
       const unsub = this.onEvent((m, params, eventSessionId) => {
@@ -237,16 +259,16 @@ export class Session implements Transport {
         try {
           if (predicate && !predicate(params as T)) return;
         } catch (error) {
-          clearTimeout(timer);
-          unsub();
+          cleanup();
           reject(error);
           return;
         }
-        clearTimeout(timer);
-        unsub();
+        cleanup();
         resolve(params as T);
       });
+      cancel = cleanup;
     });
+    return { promise, cancel };
   }
 
   /**
@@ -255,12 +277,21 @@ export class Session implements Transport {
    */
   async navigate(url: string, options: NavigateOptions = {}): Promise<Page.NavigateReturn> {
     await this.domains.Page.enable();
-    const loaded = this.waitFor('Page.loadEventFired', { timeoutMs: options.timeoutMs });
-    void loaded.catch(() => {});
-    const navigation = await this.domains.Page.navigate({ url });
-    if (navigation.errorText) throw new Error(`Navigation failed: ${navigation.errorText}`);
-    if (navigation.loaderId && !navigation.isDownload) await loaded;
-    return navigation;
+    const waiter = this.createEventWaiter<unknown>(
+      'Page.loadEventFired',
+      undefined,
+      options.timeoutMs ?? 30_000,
+      this.activeSessionId,
+    );
+    void waiter.promise.catch(() => {});
+    try {
+      const navigation = await this.domains.Page.navigate({ url });
+      if (navigation.errorText) throw new Error(`Navigation failed: ${navigation.errorText}`);
+      if (navigation.loaderId && !navigation.isDownload) await waiter.promise;
+      return navigation;
+    } finally {
+      waiter.cancel();
+    }
   }
 
   // Transport implementation. Called by the generated domain bindings.

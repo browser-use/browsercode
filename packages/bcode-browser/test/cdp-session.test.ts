@@ -102,15 +102,18 @@ test("a waiter registered before navigation catches an event emitted before the 
 
 test("navigate does not wait for same-document loads or downloads", async () => {
   const sameDocument = await session.navigate("https://example.com/#same-document", { timeoutMs: 20 })
+  expect((session as any).eventListeners).toHaveLength(0)
   const download = await session.navigate("https://download.example", { timeoutMs: 20 })
   expect(sameDocument.loaderId).toBeUndefined()
   expect(download.isDownload).toBe(true)
+  expect((session as any).eventListeners).toHaveLength(0)
 })
 
 test("navigate surfaces Page.navigate errorText", async () => {
   await expect(
     session.navigate("https://navigation-fails.example", { timeoutMs: 20 }),
   ).rejects.toThrow("Navigation failed: net::ERR_FAILED")
+  expect((session as any).eventListeners).toHaveLength(0)
 })
 
 test("waitFor ignores matching events from another attached session", async () => {

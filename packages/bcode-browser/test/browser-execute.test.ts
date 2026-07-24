@@ -328,3 +328,90 @@ test("a timed-out snippet cannot send later CDP commands or reconnect", async ()
     )
   }
 })
+
+test("session invalidation rejects pending and future event waiters", async () => {
+  const waiterSessionID = "waiter-" + Math.random().toString(36).slice(2, 8)
+  const waiterWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-waiter-ws-"))
+  const waiterData = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-waiter-data-"))
+  const waiterSession = SessionStore.get(waiterSessionID)
+
+  try {
+    await expect(
+      Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const impl = yield* BrowserExecute.make(waiterData)
+            return yield* impl.execute(
+              {
+                description: "Wait beyond tool timeout",
+                code: `return session.waitFor("Page.loadEventFired");`,
+                timeout: 10,
+              },
+              { sessionID: waiterSessionID, workspaceDir: waiterWorkspace },
+            )
+          }),
+        ),
+      ),
+    ).rejects.toThrow("browser_execute timed out; CDP session was reset")
+
+    expect(SessionStore.get(waiterSessionID)).not.toBe(waiterSession)
+    await expect(waiterSession.waitFor("Page.loadEventFired")).rejects.toThrow("CDP session was reset")
+  } finally {
+    await SessionStore.evict(waiterSessionID)
+    await Promise.all(
+      [waiterWorkspace, waiterData].map((d) => fs.rm(d, { recursive: true, force: true })),
+    )
+  }
+})
+
+test("a tool timeout closes a WebSocket that is still connecting", async () => {
+  const connectingSessionID = "connecting-" + Math.random().toString(36).slice(2, 8)
+  const connectingWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-connecting-ws-"))
+  const connectingData = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-connecting-data-"))
+  let openedSockets = 0
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req, bunServer) {
+      await Bun.sleep(50)
+      return bunServer.upgrade(req) ? undefined : new Response("nope", { status: 400 })
+    },
+    websocket: {
+      open() {
+        openedSockets++
+      },
+      message() {},
+      close() {},
+    },
+  })
+  if (server.port === undefined) throw new Error("test server has no port")
+  const wsUrl = `ws://127.0.0.1:${server.port}/`
+
+  try {
+    await expect(
+      Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const impl = yield* BrowserExecute.make(connectingData)
+            return yield* impl.execute(
+              {
+                description: "Connect beyond tool timeout",
+                code: `return session.connect({ wsUrl: ${JSON.stringify(wsUrl)}, timeoutMs: 1000 });`,
+                timeout: 10,
+              },
+              { sessionID: connectingSessionID, workspaceDir: connectingWorkspace },
+            )
+          }),
+        ),
+      ),
+    ).rejects.toThrow("browser_execute timed out; CDP session was reset")
+
+    await Bun.sleep(80)
+    expect(openedSockets).toBe(0)
+  } finally {
+    await SessionStore.evict(connectingSessionID)
+    server.stop(true)
+    await Promise.all(
+      [connectingWorkspace, connectingData].map((d) => fs.rm(d, { recursive: true, force: true })),
+    )
+  }
+})

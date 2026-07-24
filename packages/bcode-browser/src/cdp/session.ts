@@ -51,6 +51,8 @@ export class Session implements Transport {
   private reattachPromise?: Promise<void>;
   private enabledDomains = new Map<string, Map<string, unknown>>();
   private invalidatedError?: Error;
+  private openingSockets = new Set<WebSocket>();
+  private pendingWaiters = new Set<(error: Error) => void>();
   private eventListeners: Array<(method: string, params: unknown, sessionId?: string) => void> = [];
   private callResultListeners: Array<(method: string, params: unknown, result: unknown) => void> = [];
 
@@ -127,10 +129,12 @@ export class Session implements Transport {
   private openWs(wsUrl: string, timeoutMs: number): Promise<void> {
     return new Promise<void>((res, rej) => {
       const ws = new WebSocket(wsUrl);
+      this.openingSockets.add(ws);
       let done = false;
       const finish = (err?: Error) => {
         if (done) return;
         done = true;
+        this.openingSockets.delete(ws);
         clearTimeout(timer);
         if (err) { try { ws.close(); } catch { /* ignore */ } rej(err); }
         else res();
@@ -165,7 +169,7 @@ export class Session implements Transport {
           this.activeTargetId = undefined;
           this.enabledDomains.clear();
         }
-        finish(new Error('WS closed before open (likely 403 or port closed)'));
+        finish(this.invalidatedError ?? new Error('WS closed before open (likely 403 or port closed)'));
       });
     });
   }
@@ -197,9 +201,16 @@ export class Session implements Transport {
     this.enabledDomains.clear();
     this.eventListeners = [];
     this.callResultListeners = [];
-    if (!ws) return;
-    this.rejectPending(ws, error);
-    try { ws.close(); } catch { /* ignore */ }
+    for (const reject of this.pendingWaiters) reject(error);
+    this.pendingWaiters.clear();
+    for (const opening of this.openingSockets) {
+      try { opening.close(); } catch { /* ignore */ }
+    }
+    this.openingSockets.clear();
+    if (ws) {
+      this.rejectPending(ws, error);
+      try { ws.close(); } catch { /* ignore */ }
+    }
   }
 
   /**
@@ -251,16 +262,29 @@ export class Session implements Transport {
 
   /** Wait for the next event matching `method` (and optional predicate). */
   waitFor<T = unknown>(method: string, predicate?: (params: T) => boolean, timeoutMs = 30_000): Promise<T> {
+    if (this.invalidatedError) return Promise.reject(this.invalidatedError);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        unsub();
-        reject(new Error(`Timeout waiting for ${method}`));
-      }, timeoutMs);
-      const unsub = this.onEvent((m, params) => {
-        if (m !== method) return;
-        if (predicate && !predicate(params as T)) return;
+      let settled = false;
+      let unsub = () => {};
+      const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         unsub();
+        this.pendingWaiters.delete(fail);
+        reject(error);
+      };
+      const timer = setTimeout(() => {
+        fail(new Error(`Timeout waiting for ${method}`));
+      }, timeoutMs);
+      this.pendingWaiters.add(fail);
+      unsub = this.onEvent((m, params) => {
+        if (m !== method) return;
+        if (predicate && !predicate(params as T)) return;
+        settled = true;
+        clearTimeout(timer);
+        unsub();
+        this.pendingWaiters.delete(fail);
         resolve(params as T);
       });
     });

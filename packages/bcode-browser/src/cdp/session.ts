@@ -50,6 +50,7 @@ export class Session implements Transport {
   private activeTargetId: string | undefined;
   private reattachPromise?: Promise<void>;
   private enabledDomains = new Map<string, Map<string, unknown>>();
+  private invalidatedError?: Error;
   private eventListeners: Array<(method: string, params: unknown, sessionId?: string) => void> = [];
   private callResultListeners: Array<(method: string, params: unknown, result: unknown) => void> = [];
 
@@ -83,6 +84,8 @@ export class Session implements Transport {
    * and we connect directly to the supplied endpoint.
    */
   async connect(opts: ConnectOptions = {}): Promise<void> {
+    if (this.invalidatedError) throw this.invalidatedError;
+
     // No-argument connect is an ensure-connected operation. Reopening the
     // same configured endpoint would discard the active target session and
     // make the next page command run against the browser-level socket.
@@ -138,6 +141,10 @@ export class Session implements Transport {
           try { ws.close(); } catch { /* ignore */ }
           return;
         }
+        if (this.invalidatedError) {
+          finish(this.invalidatedError);
+          return;
+        }
         const previous = this.ws;
         this.ws = ws;
         this.activeSessionId = undefined;
@@ -164,11 +171,35 @@ export class Session implements Transport {
   }
 
   isConnected(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN;
+    return !this.invalidatedError && this.ws?.readyState === WebSocket.OPEN;
   }
 
   close(): void {
     this.ws?.close();
+  }
+
+  /**
+   * Permanently retire this Session object.
+   *
+   * Used when an in-process snippet outlives its tool timeout. The Promise
+   * itself cannot be preempted, so closing alone is insufficient: abandoned
+   * code could call connect() again later. Invalidated sessions reject every
+   * future transport operation, while SessionStore gives the next tool call
+   * a fresh Session object.
+   */
+  invalidate(error: Error): void {
+    if (this.invalidatedError) return;
+    this.invalidatedError = error;
+    const ws = this.ws;
+    this.ws = undefined;
+    this.activeSessionId = undefined;
+    this.activeTargetId = undefined;
+    this.enabledDomains.clear();
+    this.eventListeners = [];
+    this.callResultListeners = [];
+    if (!ws) return;
+    this.rejectPending(ws, error);
+    try { ws.close(); } catch { /* ignore */ }
   }
 
   /**
@@ -184,6 +215,7 @@ export class Session implements Transport {
 
   /** Set the active sessionId directly (e.g. one you already attached). */
   setActiveSession(sessionId: string | undefined): void {
+    if (this.invalidatedError) throw this.invalidatedError;
     this.activeSessionId = sessionId;
     this.activeTargetId = undefined;
   }
@@ -257,6 +289,7 @@ export class Session implements Transport {
   }
 
   private send(method: string, params: unknown, sessionId?: string): Promise<unknown> {
+    if (this.invalidatedError) return Promise.reject(this.invalidatedError);
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error('Not connected. Call session.connect(...) first.'));

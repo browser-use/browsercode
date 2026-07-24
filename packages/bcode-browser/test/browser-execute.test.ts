@@ -270,3 +270,61 @@ test("overlapping execute calls do not clobber each other's console capture", as
     [aWorkspace, bWorkspace, aData, bData].map((d) => fs.rm(d, { recursive: true, force: true })),
   )
 })
+
+test("a timed-out snippet cannot send later CDP commands or reconnect", async () => {
+  const timedOutSessionID = "timeout-" + Math.random().toString(36).slice(2, 8)
+  const timedOutWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-timeout-ws-"))
+  const timedOutData = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-timeout-data-"))
+  let lateCommandCount = 0
+  const server = Bun.serve({
+    port: 0,
+    fetch(req, bunServer) {
+      return bunServer.upgrade(req) ? undefined : new Response("nope", { status: 400 })
+    },
+    websocket: {
+      message(socket, raw) {
+        const message = JSON.parse(String(raw))
+        if (message.method !== "Runtime.evaluate") return
+        lateCommandCount++
+        socket.send(JSON.stringify({ id: message.id, result: { result: { type: "boolean", value: true } } }))
+      },
+      close() {},
+    },
+  })
+  if (server.port === undefined) throw new Error("test server has no port")
+  const wsUrl = `ws://127.0.0.1:${server.port}/`
+  const timedOutSession = SessionStore.get(timedOutSessionID)
+
+  try {
+    await timedOutSession.connect({ wsUrl })
+    await expect(
+      Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const impl = yield* BrowserExecute.make(timedOutData)
+            return yield* impl.execute(
+              {
+                description: "Attempt command after timeout",
+                code: `await new Promise((resolve) => setTimeout(resolve, 50));
+                       return session.Runtime.evaluate({ expression: "true" });`,
+                timeout: 10,
+              },
+              { sessionID: timedOutSessionID, workspaceDir: timedOutWorkspace },
+            )
+          }),
+        ),
+      ),
+    ).rejects.toThrow("browser_execute timed out; CDP session was reset")
+
+    await Bun.sleep(80)
+    expect(lateCommandCount).toBe(0)
+    expect(SessionStore.get(timedOutSessionID)).not.toBe(timedOutSession)
+    await expect(timedOutSession.connect({ wsUrl })).rejects.toThrow("CDP session was reset")
+  } finally {
+    await SessionStore.evict(timedOutSessionID)
+    server.stop(true)
+    await Promise.all(
+      [timedOutWorkspace, timedOutData].map((d) => fs.rm(d, { recursive: true, force: true })),
+    )
+  }
+})

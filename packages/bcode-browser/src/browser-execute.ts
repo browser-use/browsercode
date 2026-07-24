@@ -32,10 +32,11 @@
 //
 // Cancellation: JS Promises are not preemptively cancellable. A snippet
 // without `await` yield-points (e.g. `for (let i = 0; i < 1e9; i++) {}`)
-// runs to completion before our timeout fiber observes it. `Effect.timeoutOrElse`
-// fails the surrounding fiber but the orphan Promise keeps running until it
-// finishes. This matches the `uv run` subprocess case (SIGTERM only after
-// the Python signal handler yields). Document, don't fix.
+// runs to completion before our timeout fiber observes it. When a yielding
+// snippet times out, its Promise may continue, so we permanently invalidate
+// the Session object it received. Abandoned code can finish local work but
+// cannot reconnect or send later CDP commands; the next tool call gets a
+// fresh Session from SessionStore.
 //
 // Level 1 per decisions.md §1c — substantial implementation lives here. The
 // Level-2 hook in packages/opencode is a thin adapter.
@@ -157,9 +158,9 @@ const serialize = (v: unknown): string => {
 export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string) {
   const skillsDir = yield* Effect.promise(() => Skills.resolveSkillsDir(dataDir))
 
-  const execute = (args: Parameters, ctx: ExecuteContext) =>
-    Effect.gen(function* () {
-      const session = SessionStore.get(ctx.sessionID)
+  const execute = (args: Parameters, ctx: ExecuteContext) => {
+    const session = SessionStore.get(ctx.sessionID)
+    return Effect.gen(function* () {
       yield* Effect.promise(() => fs.mkdir(ctx.workspaceDir, { recursive: true }))
 
       const wrapped = yield* Effect.try({
@@ -228,9 +229,15 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
       Effect.scoped,
       Effect.timeoutOrElse({
         duration: Math.min(args.timeout ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS),
-        orElse: () => Effect.fail(new Error("browser_execute timed out")),
+        orElse: () =>
+          Effect.gen(function* () {
+            const error = new Error("browser_execute timed out; CDP session was reset")
+            yield* Effect.sync(() => SessionStore.invalidate(ctx.sessionID, session, error))
+            return yield* Effect.fail(error)
+          }),
       }),
     )
+  }
 
   return { parameters, execute, skillsDir }
 })

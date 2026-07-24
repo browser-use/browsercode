@@ -27,6 +27,13 @@ export const get = (sessionID: string): Session => {
   return fresh
 }
 
+export const invalidate = (sessionID: string, expected: Session, error: Error): void => {
+  const entry = sessions.get(sessionID)
+  if (entry !== expected) return
+  sessions.delete(sessionID)
+  entry.invalidate(error)
+}
+
 export const evict = async (sessionID: string): Promise<void> => {
   const entry = sessions.get(sessionID)
   if (!entry) return

@@ -235,9 +235,10 @@ test("reattach reuses an existing about:blank target", async () => {
   }
 })
 
-test("reattach creates a blank page instead of switching to another live target", async () => {
+test("a missing original target is reported without replaying on another page", async () => {
   let attachCount = 0
-  let createdTarget: unknown
+  let createCount = 0
+  let commandCount = 0
   const attachedTargets: string[] = []
   const server = Bun.serve({
     port: 0,
@@ -266,8 +267,8 @@ test("reattach creates a blank page instead of switching to another live target"
           return
         }
         if (message.method === "Target.createTarget") {
-          createdTarget = message.params
-          socket.send(JSON.stringify({ id: message.id, result: { targetId: "fresh-page" } }))
+          createCount++
+          socket.send(JSON.stringify({ id: message.id, result: { targetId: "unexpected-page" } }))
           return
         }
         if (["Page.enable", "DOM.enable", "Runtime.enable", "Network.enable"].includes(message.method)) {
@@ -275,6 +276,7 @@ test("reattach creates a blank page instead of switching to another live target"
           return
         }
         if (message.method === "Runtime.evaluate") {
+          commandCount++
           if (message.sessionId === "session-1") {
             socket.send(JSON.stringify({
               id: message.id,
@@ -293,12 +295,57 @@ test("reattach creates a blank page instead of switching to another live target"
   try {
     await session.connect({ wsUrl: wsUrl(server) })
     await session.use("old-page")
+    await expect(session.domains.Runtime.evaluate({ expression: "submit()" }))
+      .rejects.toThrow("CDP target old-page was closed")
+
+    expect(commandCount).toBe(1)
+    expect(createCount).toBe(0)
+    expect(attachCount).toBe(1)
+    expect(attachedTargets).toEqual(["old-page"])
+  } finally {
+    session.close()
+    server.stop(true)
+  }
+})
+
+test("no-argument connect preserves a healthy socket and active target", async () => {
+  let connectionCount = 0
+  const commandSessions: string[] = []
+  const server = Bun.serve({
+    port: 0,
+    fetch(req, bunServer) {
+      if (!bunServer.upgrade(req)) return new Response("nope", { status: 400 })
+      connectionCount++
+      return undefined
+    },
+    websocket: {
+      message(socket, raw) {
+        const message = JSON.parse(String(raw))
+        if (message.method === "Target.attachToTarget") {
+          socket.send(JSON.stringify({ id: message.id, result: { sessionId: "session-1" } }))
+          return
+        }
+        if (message.method !== "Runtime.evaluate") return
+        commandSessions.push(message.sessionId)
+        socket.send(JSON.stringify({
+          id: message.id,
+          result: { result: { type: "boolean", value: true } },
+        }))
+      },
+      close() {},
+    },
+  })
+  const session = new Session()
+
+  try {
+    await session.connect({ wsUrl: wsUrl(server) })
+    await session.use("page-1")
+    await session.connect()
     const result = await session.domains.Runtime.evaluate({ expression: "true" })
 
     expect(result.result.value).toBe(true)
-    expect(createdTarget).toEqual({ url: "about:blank" })
-    expect(attachCount).toBe(2)
-    expect(attachedTargets).toEqual(["old-page", "fresh-page"])
+    expect(connectionCount).toBe(1)
+    expect(commandSessions).toEqual(["session-1"])
   } finally {
     session.close()
     server.stop(true)

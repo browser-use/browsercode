@@ -83,6 +83,11 @@ export class Session implements Transport {
    * and we connect directly to the supplied endpoint.
    */
   async connect(opts: ConnectOptions = {}): Promise<void> {
+    // No-argument connect is an ensure-connected operation. Reopening the
+    // same configured endpoint would discard the active target session and
+    // make the next page command run against the browser-level socket.
+    if (!opts.wsUrl && !opts.profileDir && this.isConnected()) return;
+
     const timeoutMs = opts.timeoutMs ?? 5_000;
     if (opts.wsUrl || opts.profileDir) {
       const wsUrl = await resolveWsUrl(opts, timeoutMs);
@@ -294,16 +299,33 @@ export class Session implements Transport {
   }
 
   private async attachPage(staleSessionId: string, staleTargetId?: string): Promise<void> {
+    if (!staleTargetId) {
+      if (this.activeSessionId === staleSessionId) {
+        this.activeSessionId = undefined;
+        this.activeTargetId = undefined;
+        this.enabledDomains.delete(staleSessionId);
+      }
+      throw new Error(
+        'CDP target session was lost and its target is unknown; command was not retried on another page.',
+      );
+    }
     const domainsToRestore = [...(this.enabledDomains.get(staleSessionId)?.entries() ?? [])];
     const { targetInfos } = await this.domains.Target.getTargets({});
     const pages = targetInfos as PageTarget[];
-    const exactTarget = staleTargetId
-      ? pages.find(target => target.type === 'page' && target.targetId === staleTargetId)
-      : undefined;
-    const targetId = exactTarget?.targetId
-      ?? (!staleTargetId ? pages.find(isUsablePageTarget)?.targetId : undefined)
-      ?? (await this.domains.Target.createTarget({ url: 'about:blank' })).targetId;
-    const sessionId = await this.use(targetId);
+    const exactTarget = pages.find(
+      target => target.type === 'page' && target.targetId === staleTargetId,
+    );
+    if (!exactTarget) {
+      if (this.activeSessionId === staleSessionId) {
+        this.activeSessionId = undefined;
+        this.activeTargetId = undefined;
+        this.enabledDomains.delete(staleSessionId);
+      }
+      throw new Error(
+        `CDP target ${staleTargetId} was closed; command was not retried on another page.`,
+      );
+    }
+    const sessionId = await this.use(exactTarget.targetId);
     await Promise.all(
       domainsToRestore.map(
         ([method, params]) => this.send(method, params, sessionId),
@@ -438,15 +460,6 @@ export async function listPageTargets(session: Session): Promise<PageTarget[]> {
   return (targetInfos as PageTarget[]).filter(
     t => t.type === 'page' && !t.url.startsWith('chrome://') && !t.url.startsWith('devtools://')
   );
-}
-
-function isUsablePageTarget(target: PageTarget): boolean {
-  return target.type === 'page'
-    && !target.url.startsWith('chrome://')
-    && !target.url.startsWith('chrome-untrusted://')
-    && !target.url.startsWith('devtools://')
-    && !target.url.startsWith('chrome-extension://')
-    && (!target.url.startsWith('about:') || target.url === 'about:blank');
 }
 
 /**

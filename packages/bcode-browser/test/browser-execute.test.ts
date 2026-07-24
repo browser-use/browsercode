@@ -415,3 +415,42 @@ test("a tool timeout closes a WebSocket that is still connecting", async () => {
     )
   }
 })
+
+test("an invalidated session cannot connect after profile resolution finishes", async () => {
+  const resolvingSessionID = "resolving-" + Math.random().toString(36).slice(2, 8)
+  const resolvingProfile = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-resolving-profile-"))
+  const resolvingSession = SessionStore.get(resolvingSessionID)
+  let openedSockets = 0
+  const server = Bun.serve({
+    port: 0,
+    fetch(req, bunServer) {
+      return bunServer.upgrade(req) ? undefined : new Response("nope", { status: 400 })
+    },
+    websocket: {
+      open() {
+        openedSockets++
+      },
+      message() {},
+      close() {},
+    },
+  })
+  if (server.port === undefined) throw new Error("test server has no port")
+
+  try {
+    const connecting = resolvingSession.connect({ profileDir: resolvingProfile, timeoutMs: 1000 })
+    await Bun.sleep(20)
+    resolvingSession.invalidate(new Error("CDP session was reset"))
+    await fs.writeFile(
+      path.join(resolvingProfile, "DevToolsActivePort"),
+      `${server.port}\n/devtools/browser/test\n`,
+    )
+
+    await expect(connecting).rejects.toThrow("CDP session was reset")
+    await Bun.sleep(50)
+    expect(openedSockets).toBe(0)
+  } finally {
+    await SessionStore.evict(resolvingSessionID)
+    server.stop(true)
+    await fs.rm(resolvingProfile, { recursive: true, force: true })
+  }
+})

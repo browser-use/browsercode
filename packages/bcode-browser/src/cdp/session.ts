@@ -86,7 +86,7 @@ export class Session implements Transport {
    * and we connect directly to the supplied endpoint.
    */
   async connect(opts: ConnectOptions = {}): Promise<void> {
-    if (this.invalidatedError) throw this.invalidatedError;
+    this.throwIfInvalidated();
 
     // No-argument connect is an ensure-connected operation. Reopening the
     // same configured endpoint would discard the active target session and
@@ -96,15 +96,19 @@ export class Session implements Transport {
     const timeoutMs = opts.timeoutMs ?? 5_000;
     if (opts.wsUrl || opts.profileDir) {
       const wsUrl = await resolveWsUrl(opts, timeoutMs);
+      this.throwIfInvalidated();
       await this.openWs(wsUrl, timeoutMs);
+      this.throwIfInvalidated();
       return;
     }
     const envWsUrl = process.env.BU_CDP_WS ?? process.env.BU_CDP_URL;
     if (envWsUrl) {
       await this.openWs(envWsUrl, timeoutMs);
+      this.throwIfInvalidated();
       return;
     }
     const browsers = await detectBrowsers();
+    this.throwIfInvalidated();
     if (browsers.length === 0) {
       const scanned = getBrowserCandidates().map(c => c.name).join(', ');
       throw new Error(
@@ -113,10 +117,13 @@ export class Session implements Transport {
     }
     const errors: string[] = [];
     for (const b of browsers) {
+      this.throwIfInvalidated();
       try {
         await this.openWs(b.wsUrl, timeoutMs);
+        this.throwIfInvalidated();
         return;
       } catch (e) {
+        this.throwIfInvalidated();
         const msg = e instanceof Error ? e.message : String(e);
         errors.push(`  ${b.name} @ ${b.wsUrl}: ${msg}`);
       }
@@ -127,7 +134,12 @@ export class Session implements Transport {
   }
 
   private openWs(wsUrl: string, timeoutMs: number): Promise<void> {
+    this.throwIfInvalidated();
     return new Promise<void>((res, rej) => {
+      if (this.invalidatedError) {
+        rej(this.invalidatedError);
+        return;
+      }
       const ws = new WebSocket(wsUrl);
       this.openingSockets.add(ws);
       let done = false;
@@ -172,6 +184,10 @@ export class Session implements Transport {
         finish(this.invalidatedError ?? new Error('WS closed before open (likely 403 or port closed)'));
       });
     });
+  }
+
+  private throwIfInvalidated(): void {
+    if (this.invalidatedError) throw this.invalidatedError;
   }
 
   isConnected(): boolean {

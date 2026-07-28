@@ -27,7 +27,7 @@ export const routingPolicy = [
   "Good episodes include completing a form or rate quote, applying filters and returning a bounded set of rows, or visiting a known finite list of pages. Delegate the whole episode, not one click from it.",
   "Keep source discovery and judgment, ambiguous or open-ended research, unknown-size exhaustive collection, CDP/JavaScript/API reverse engineering, filesystem work, and access/authentication recovery in BrowserCode.",
   "Give the leaf every known value and required return field. Make done_when name the exact visible evidence and payload required.",
-  "Use observed_state_after, action_details, and extracted_content as postcondition evidence. Call browser_execute only when that evidence is missing, contradictory, or the action is high-stakes.",
+  "Use observed_state_after, its attached screenshot, action_details, and extracted_content as browser-observed postcondition evidence. Do not load browser_execute merely to repeat a successful low-risk state or screenshot check; use it only when evidence is missing, contradictory, or the action is high-stakes.",
   "If the leaf gives up, take over and do not delegate another episode on the same tab.",
   "</browser_delegation>",
 ].join("\n")

@@ -13,7 +13,9 @@ filesystem work, and access/authentication recovery in BrowserCode.
 
 Give the leaf all known values and required return fields. `done_when` must
 name both the visible final evidence and the exact payload it must return.
-The receipt contains browser-observed final state, parameterized actions, and
-extracted content. Use that evidence directly; call browser_execute only when
-it is missing, contradictory, or the action is high-stakes. If the leaf gives
-up, take over and do not delegate again on the same tab.
+The receipt contains browser-observed final state, its post-action screenshot,
+parameterized actions, and extracted content. Use that evidence directly. Do
+not load browser_execute merely to repeat a successful low-risk state or
+screenshot check; call it only when evidence is missing, contradictory, or
+the action is high-stakes. If the leaf gives up, take over and do not delegate
+again on the same tab.

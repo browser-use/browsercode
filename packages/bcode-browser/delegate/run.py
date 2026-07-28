@@ -152,8 +152,13 @@ def action_details(action_history: list[list[dict[str, Any]]]) -> list[str]:
     details: list[str] = []
     for step_number, step in enumerate(action_history, start=1):
         for action in step:
+            compact_action = {
+                key: value
+                for key, value in action.items()
+                if key != "interacted_element"
+            }
             serialized = json.dumps(
-                _redact_sensitive(action), ensure_ascii=False, default=str
+                _redact_sensitive(compact_action), ensure_ascii=False, default=str
             )
             details.append(f"step {step_number}: {serialized[:500]}")
     return details[-25:]

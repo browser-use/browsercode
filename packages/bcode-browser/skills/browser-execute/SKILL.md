@@ -21,10 +21,12 @@ Delegate the whole episode, not one click from it.
 Keep source discovery and judgment, ambiguous/open-ended research,
 unknown-size exhaustive collection, CDP/JavaScript/API reverse engineering,
 filesystem work, and access/authentication recovery here. A successful
-delegation receipt already includes browser-observed final state, action
-details, and extracted content. Reinspect only if that evidence is missing,
-contradictory, or the action is high-stakes. After a give-up, take over and do
-not delegate again on the same tab.
+delegation receipt already includes browser-observed final state, its
+post-action screenshot, action details, and extracted content. Do not load
+this skill merely to repeat a successful low-risk state or screenshot check.
+Reinspect only if evidence is missing, contradictory, or the action is
+high-stakes. After a give-up, take over and do not delegate again on the same
+tab.
 
 ## Connecting
 Always call `session.connect(...)` once at the start of your work. There are three connection methods:

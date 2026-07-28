@@ -49,29 +49,53 @@ export const BrowserDelegateTool = Tool.define(
               }
             })
           }
+          const screenshotArtifact = result.observed_state_after?.screenshot_artifact
+          const screenshotPath =
+            screenshotArtifact && path.basename(screenshotArtifact) === screenshotArtifact
+              ? path.join(result.artifact_directory, screenshotArtifact)
+              : undefined
+          const screenshotFile = screenshotPath ? Bun.file(screenshotPath) : undefined
+          const attachments =
+            screenshotFile && (yield* Effect.promise(() => screenshotFile.exists()))
+              ? [
+                  {
+                    type: "file" as const,
+                    mime: "image/png",
+                    url: `data:image/png;base64,${Buffer.from(
+                      yield* Effect.promise(() => screenshotFile.arrayBuffer()),
+                    ).toString("base64")}`,
+                  },
+                ]
+              : []
           return {
             title: `browser_delegate: ${result.status}`,
-            output: JSON.stringify(
-              {
-                status: result.status,
-                summary: result.summary,
-                action_digest: result.action_digest,
-                action_details: result.action_details,
-                extracted_content: result.extracted_content,
-                done_condition_claimed: result.done_condition_claimed,
-                initial_url: result.initial_url,
-                initial_title: result.initial_title,
-                final_url: result.final_url,
-                observed_state_after: result.observed_state_after,
-                blocker: result.blocker,
-                uncertainties: result.uncertainties,
-                metrics: result.metrics,
-                artifact_directory: result.artifact_directory,
-              },
-              null,
-              2,
-            ),
+            output: [
+              JSON.stringify(
+                {
+                  status: result.status,
+                  summary: result.summary,
+                  action_digest: result.action_digest,
+                  action_details: result.action_details,
+                  extracted_content: result.extracted_content,
+                  done_condition_claimed: result.done_condition_claimed,
+                  initial_url: result.initial_url,
+                  initial_title: result.initial_title,
+                  final_url: result.final_url,
+                  observed_state_after: result.observed_state_after,
+                  blocker: result.blocker,
+                  uncertainties: result.uncertainties,
+                  metrics: result.metrics,
+                  artifact_directory: result.artifact_directory,
+                },
+                null,
+                2,
+              ),
+              attachments.length > 0 ? "(browser-observed post-action screenshot attached)" : "",
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
             metadata: result,
+            attachments,
           }
         }).pipe(Effect.orDie),
     }

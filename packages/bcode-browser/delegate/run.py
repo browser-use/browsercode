@@ -210,7 +210,7 @@ DONE_WHEN
         else "Browser Use gave up without a summary."
     )
     urls = [url for url in history.urls() if url]
-    return DelegationResult(
+    result = DelegationResult(
         delegation_id=request.delegation_id,
         status=status,
         summary=summary[-2000:],
@@ -236,6 +236,8 @@ DONE_WHEN
         ],
         trace_id=trace_id(context),
     )
+    await browser.stop()
+    return result
 
 
 async def main() -> int:

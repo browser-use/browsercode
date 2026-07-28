@@ -49,6 +49,7 @@ import { Skills } from "./skills"
 
 const DEFAULT_TIMEOUT_MS = 60 * 1000
 const MAX_TIMEOUT_MS = 10 * 60 * 1000
+const MAX_TIMEOUT_OUTPUT_LENGTH = 30_000
 
 // Field order matters: providers stream tool-call args in schema-declared
 // order, so the model commits to whichever field comes first. `code` is the
@@ -160,6 +161,7 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
 
   const execute = (args: Parameters, ctx: ExecuteContext) => {
     const session = SessionStore.get(ctx.sessionID)
+    const captured = { output: "" }
     return Effect.gen(function* () {
       yield* Effect.promise(() => fs.mkdir(ctx.workspaceDir, { recursive: true }))
 
@@ -168,10 +170,9 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
         catch: (err) => new Error(`syntax error in browser_execute snippet: ${err}`),
       })
 
-      let output = ""
       const tee = (...a: unknown[]) => {
-        output += a.map((x) => (typeof x === "string" ? x : serialize(x))).join(" ") + "\n"
-        if (ctx.onChunk) Effect.runFork(ctx.onChunk(output))
+        captured.output += a.map((x) => (typeof x === "string" ? x : serialize(x))).join(" ") + "\n"
+        if (ctx.onChunk) Effect.runFork(ctx.onChunk(captured.output))
       }
       // Prototype-chain to the real `console` so uncommon methods (`debug`,
       // `dir`, `trace`, `table`, `group`, …) don't throw when a snippet calls
@@ -224,14 +225,26 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
         catch: (err) => new Error(`browser_execute snippet threw: ${err instanceof Error ? err.stack ?? err.message : String(err)}`),
       }).pipe(Effect.ensuring(Effect.sync(() => unsubscribe())))
 
-      return { output, result: serialize(ran), screenshots } satisfies ExecuteResult
+      return { output: captured.output, result: serialize(ran), screenshots } satisfies ExecuteResult
     }).pipe(
       Effect.scoped,
       Effect.timeoutOrElse({
         duration: Math.min(args.timeout ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS),
         orElse: () =>
           Effect.gen(function* () {
-            const error = new Error("browser_execute timed out; CDP session was reset")
+            const timeout = Math.min(args.timeout ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS)
+            const output =
+              captured.output.length <= MAX_TIMEOUT_OUTPUT_LENGTH
+                ? captured.output
+                : "...\n\n" + captured.output.slice(-MAX_TIMEOUT_OUTPUT_LENGTH)
+            const error = new Error(
+              [
+                `browser_execute timed out after ${timeout} ms; CDP session was reset`,
+                output.trim() ? `Partial console output before timeout:\n${output.trimEnd()}` : "",
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
+            )
             yield* Effect.sync(() => SessionStore.invalidate(ctx.sessionID, session, error))
             return yield* Effect.fail(error)
           }),

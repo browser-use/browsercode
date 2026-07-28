@@ -305,7 +305,8 @@ test("a timed-out snippet cannot send later CDP commands or reconnect", async ()
             return yield* impl.execute(
               {
                 description: "Attempt command after timeout",
-                code: `await new Promise((resolve) => setTimeout(resolve, 50));
+                code: `console.log("completed batch 1");
+                       await new Promise((resolve) => setTimeout(resolve, 50));
                        return session.Runtime.evaluate({ expression: "true" });`,
                 timeout: 10,
               },
@@ -314,12 +315,15 @@ test("a timed-out snippet cannot send later CDP commands or reconnect", async ()
           }),
         ),
       ),
-    ).rejects.toThrow("browser_execute timed out; CDP session was reset")
+    ).rejects.toThrow(
+      "browser_execute timed out after 10 ms; CDP session was reset\n\n" +
+        "Partial console output before timeout:\ncompleted batch 1",
+    )
 
     await Bun.sleep(80)
     expect(lateCommandCount).toBe(0)
     expect(SessionStore.get(timedOutSessionID)).not.toBe(timedOutSession)
-    await expect(timedOutSession.connect({ wsUrl })).rejects.toThrow("CDP session was reset")
+    await expect(timedOutSession.connect({ wsUrl })).rejects.toThrow("browser_execute timed out after 10 ms")
   } finally {
     await SessionStore.evict(timedOutSessionID)
     server.stop(true)
@@ -352,10 +356,10 @@ test("session invalidation rejects pending and future event waiters", async () =
           }),
         ),
       ),
-    ).rejects.toThrow("browser_execute timed out; CDP session was reset")
+    ).rejects.toThrow("browser_execute timed out after 10 ms; CDP session was reset")
 
     expect(SessionStore.get(waiterSessionID)).not.toBe(waiterSession)
-    await expect(waiterSession.waitFor("Page.loadEventFired")).rejects.toThrow("CDP session was reset")
+    await expect(waiterSession.waitFor("Page.loadEventFired")).rejects.toThrow("browser_execute timed out after 10 ms")
   } finally {
     await SessionStore.evict(waiterSessionID)
     await Promise.all(
@@ -403,7 +407,7 @@ test("a tool timeout closes a WebSocket that is still connecting", async () => {
           }),
         ),
       ),
-    ).rejects.toThrow("browser_execute timed out; CDP session was reset")
+    ).rejects.toThrow("browser_execute timed out after 10 ms; CDP session was reset")
 
     await Bun.sleep(80)
     expect(openedSockets).toBe(0)

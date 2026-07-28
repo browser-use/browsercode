@@ -11,12 +11,16 @@
 //                      `{log, error, warn, info}` API as the real console.
 //   standard JS globals.
 //
-// Nothing is auto-loaded. To reuse code from a previous snippet the agent
-// writes plain `await import("/abs/path/foo.ts?t=" + Date.now())` against a
-// `.ts` file it owns under `<projectDir>/.bcode/agent-workspace/`. Same
-// mechanism for a 5-line wrapper and a 500-line scrape script. The Level-2
-// wrapper supplies `ctx.workspaceDir` so `.ts` files written under it can be
-// addressed by absolute path; this resolver creates the dir on first use.
+// When BU_CDP_WS or BU_CDP_URL binds the process to a provisioned browser,
+// the tool ensures the process-scoped Session is connected before running a
+// snippet. Local sessions without either variable keep explicit-connect
+// behavior. Nothing else is auto-loaded. To reuse code from a previous
+// snippet the agent writes plain
+// `await import("/abs/path/foo.ts?t=" + Date.now())` against a `.ts` file it
+// owns under `<projectDir>/.bcode/agent-workspace/`. Same mechanism for a
+// 5-line wrapper and a 500-line scrape script. The Level-2 wrapper supplies
+// `ctx.workspaceDir` so `.ts` files written under it can be addressed by
+// absolute path; this resolver creates the dir on first use.
 //
 // Output capture: a per-call `console` object (`{log, error, warn, info}`)
 // is bound into the snippet's lexical scope as the second AsyncFunction
@@ -48,6 +52,7 @@ import { Skills } from "./skills"
 
 const DEFAULT_TIMEOUT_MS = 60 * 1000
 const MAX_TIMEOUT_MS = 10 * 60 * 1000
+const cloudConnections = new WeakMap<ReturnType<typeof SessionStore.get>, Promise<void>>()
 
 // Field order matters: providers stream tool-call args in schema-declared
 // order, so the model commits to whichever field comes first. `code` is the
@@ -71,9 +76,8 @@ export type Parameters = Schema.Schema.Type<typeof parameters>
 
 export interface ExecuteContext {
   // Identifies the per-opencode-session CDP Session to bind into the snippet.
-  // The same Session is reused across calls — the agent calls
-  // `session.connect(...)` in one snippet and subsequent snippets find the
-  // already-connected Session.
+  // The same Session is reused across calls. Provisioned cloud sessions
+  // auto-connect; local sessions are connected explicitly by the agent.
   readonly sessionID: string
   // Per-project workspace dir: <projectDir>/.bcode/agent-workspace/. Created
   // on first call. The agent reads/writes/edits .ts files here via the
@@ -144,9 +148,10 @@ const serialize = (v: unknown): string => {
 }
 
 // Snippet executor. The CDP Session is resolved per-call from `SessionStore`
-// keyed on `ctx.sessionID`. The agent connects with `await session.connect(...)`
-// in one snippet (Way 1 / Way 2 / Way 3 in skills/browser-execute/SKILL.md); the Session persists
-// for follow-up snippets in the same opencode session.
+// keyed on `ctx.sessionID`. A provisioned cloud endpoint auto-connects before
+// the snippet; otherwise the agent connects explicitly (Way 1 / Way 2 / Way 3
+// in skills/browser-execute/SKILL.md). The Session persists for follow-up
+// snippets in the same opencode session.
 //
 // `dataDir` is opencode's XDG_DATA_HOME for bcode (~/.local/share/bcode/ on
 // Linux/Mac). Compiled-mode skills are extracted to `<dataDir>/skills/` once
@@ -165,6 +170,11 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
       const wrapped = yield* Effect.try({
         try: () => new AsyncFunction("session", "console", args.code),
         catch: (err) => new Error(`syntax error in browser_execute snippet: ${err}`),
+      })
+
+      yield* Effect.tryPromise({
+        try: () => ensureCloudConnected(session),
+        catch: (err) => (err instanceof Error ? err : new Error(String(err))),
       })
 
       let output = ""
@@ -234,5 +244,21 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
 
   return { parameters, execute, skillsDir }
 })
+
+async function ensureCloudConnected(session: ReturnType<typeof SessionStore.get>) {
+  if (session.isConnected()) return
+  if (!process.env.BU_CDP_WS && !process.env.BU_CDP_URL) return
+
+  const existing = cloudConnections.get(session)
+  if (existing) return existing
+
+  const connecting = session.connect()
+  cloudConnections.set(session, connecting)
+  try {
+    await connecting
+  } finally {
+    if (cloudConnections.get(session) === connecting) cloudConnections.delete(session)
+  }
+}
 
 export * as BrowserExecute from "./browser-execute"

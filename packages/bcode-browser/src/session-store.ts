@@ -1,10 +1,11 @@
 // Process-scope per-opencode-session CDP Session map.
 //
-// `browser_execute` looks up a `Session` keyed by `sessionID` so that calls
-// to `session.connect(...)` made inside one snippet persist across later
-// snippets in the same opencode session — the agent connects once, drives
-// many. The Session is a single CDP transport (one WebSocket); the agent
-// is the source of truth for which browser is on the other end.
+// `browser_execute` looks up a `Session` keyed by `sessionID` so that its
+// provisioned-cloud auto-connect, or an explicit `session.connect(...)`
+// inside a snippet, persists across later snippets in the same opencode
+// session — connect once, drive many. The Session is a single CDP transport
+// (one WebSocket); the agent is the source of truth for which browser is on
+// the other end.
 //
 // Lifetime: Sessions live for the life of the opencode process. The
 // underlying WebSocket closes naturally when the browser exits. The agent

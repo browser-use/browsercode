@@ -43,6 +43,7 @@
 import fs from "fs/promises"
 import path from "path"
 import { Effect, Schema } from "effect"
+import type { Page } from "./cdp/generated"
 import { SessionStore } from "./session-store"
 import { Skills } from "./skills"
 
@@ -184,6 +185,30 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
         debug: tee,
       })
 
+      // BrowserCode extension to CDP's screenshot params. The wrapper strips
+      // this field before the command reaches Chrome; false keeps the returned
+      // base64 available to the snippet without attaching it to model context.
+      type ScreenshotParams = Page.CaptureScreenshotParams & {
+        readonly attachToContext?: boolean
+      }
+      const localOnlyScreenshotParams = new WeakSet<object>()
+      const page = Object.assign(Object.create(session.domains.Page), {
+        captureScreenshot: (params: ScreenshotParams = {}) => {
+          const { attachToContext, ...cdpParams } = params
+          if (attachToContext === false) localOnlyScreenshotParams.add(cdpParams)
+          return session.domains.Page.captureScreenshot(cdpParams)
+        },
+      })
+      const domains = Object.assign(Object.create(session.domains), { Page: page })
+      const snippetSession = new Proxy(session, {
+        get(target, property) {
+          if (property === "Page") return page
+          if (property === "domains") return domains
+          const value = Reflect.get(target, property, target)
+          return typeof value === "function" ? value.bind(target) : value
+        },
+      })
+
       // Screenshot tap. Subscribes to the Session's call-result stream for
       // the duration of this execute() call; every successful
       // `Page.captureScreenshot` is collected (drained into `attachments[]`
@@ -209,7 +234,7 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
         const mime = screenshotMime(p.format)
         const ext = screenshotExt(p.format)
         const idx = seq++
-        screenshots.push({ mime, base64: r.data })
+        if (!localOnlyScreenshotParams.has(p)) screenshots.push({ mime, base64: r.data })
         if (dumpDir) {
           const filename = `${ctx.sessionID}-${startedAt}-${String(idx).padStart(3, "0")}.${ext}`
           fs.mkdir(dumpDir, { recursive: true })
@@ -219,7 +244,7 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
       })
 
       const ran = yield* Effect.tryPromise({
-        try: () => wrapped(session, snippetConsole),
+        try: () => wrapped(snippetSession, snippetConsole),
         catch: (err) => new Error(`browser_execute snippet threw: ${err instanceof Error ? err.stack ?? err.message : String(err)}`),
       }).pipe(Effect.ensuring(Effect.sync(() => unsubscribe())))
 

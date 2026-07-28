@@ -117,21 +117,22 @@ test.skipIf(!enabled)("workspace import inside a snippet", async () => {
   expect(JSON.parse(result.result)).toBe("bcode-be")
 })
 
-test.skipIf(!enabled)("Page.captureScreenshot is collected into result.screenshots", async () => {
+test.skipIf(!enabled)("Page.captureScreenshot can stay out of model context", async () => {
   const result = await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const impl = yield* BrowserExecute.make(dataDir)
         return yield* impl.execute(
           {
-            description: "Capture two screenshots",
+            description: "Capture context screenshots",
             code: `await session.Page.enable();
                    const loaded = session.waitFor("Page.loadEventFired", { timeoutMs: 5000 });
                    await session.Page.navigate({ url: "data:text/html,<title>shot</title><body>hi" });
                    await loaded;
                    const a = await session.Page.captureScreenshot({ format: "png" });
                    const b = await session.Page.captureScreenshot({ format: "jpeg", quality: 50 });
-                   return { aLen: a.data.length, bLen: b.data.length };`,
+                   const local = await session.Page.captureScreenshot({ format: "webp", attachToContext: false });
+                   return { aLen: a.data.length, bLen: b.data.length, localLen: local.data.length };`,
           },
           { sessionID, workspaceDir },
         )
@@ -141,7 +142,10 @@ test.skipIf(!enabled)("Page.captureScreenshot is collected into result.screensho
   expect(result.screenshots).toHaveLength(2)
   expect(result.screenshots[0]!.mime).toBe("image/png")
   expect(result.screenshots[1]!.mime).toBe("image/jpeg")
-  // base64 must round-trip back to non-empty bytes for both shots.
+  // The local-only screenshot still returned data to the snippet but was not
+  // collected into model-context attachments.
+  expect(JSON.parse(result.result).localLen).toBeGreaterThan(0)
+  // Attached base64 must round-trip back to non-empty bytes for both shots.
   expect(Buffer.from(result.screenshots[0]!.base64, "base64").length).toBeGreaterThan(0)
   expect(Buffer.from(result.screenshots[1]!.base64, "base64").length).toBeGreaterThan(0)
 })
@@ -151,20 +155,21 @@ test.skipIf(!enabled)("BCODE_SCREENSHOT_DIR dumps screenshots to disk", async ()
   const prev = process.env.BCODE_SCREENSHOT_DIR
   process.env.BCODE_SCREENSHOT_DIR = dump
   try {
-    await Effect.runPromise(
+    const result = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const impl = yield* BrowserExecute.make(dataDir)
           return yield* impl.execute(
             {
               description: "Dump screenshot to disk",
-              code: `await session.Page.captureScreenshot({ format: "png" });`,
+              code: `await session.Page.captureScreenshot({ format: "png", attachToContext: false });`,
             },
             { sessionID, workspaceDir },
           )
         }),
       ),
     )
+    expect(result.screenshots).toHaveLength(0)
     // Disk dump is fire-and-forget; give it a tick to land.
     await new Promise((r) => setTimeout(r, 150))
     const files = await fs.readdir(dump)

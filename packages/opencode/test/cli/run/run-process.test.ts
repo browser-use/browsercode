@@ -242,6 +242,38 @@ describe("opencode run (non-interactive subprocess)", () => {
   )
 
   cliIt.concurrent(
+    "exits 0 when compaction recovers a provider size error",
+    ({ llm, opencode }) =>
+      Effect.gen(function* () {
+        yield* llm.error(413, {
+          error: { type: "request_too_large", message: "Request exceeds the maximum size" },
+        })
+        yield* llm.text("compacted history")
+        yield* llm.text("recovered output")
+
+        const result = yield* opencode.run("recover after overflow", {
+          format: "json",
+          env: { OPENCODE_DISABLE_AUTOCOMPACT: "0" },
+        })
+
+        opencode.expectExit(result, 0)
+        const events = opencode.parseJsonEvents(result.stdout)
+        expect(events.some((event) => event.type === "error")).toBe(true)
+        expect(
+          events.some(
+            (event) =>
+              event.type === "text" &&
+              typeof event.part === "object" &&
+              event.part !== null &&
+              "text" in event.part &&
+              event.part.text === "recovered output",
+          ),
+        ).toBe(true)
+      }),
+    60_000,
+  )
+
+  cliIt.concurrent(
     "rejects requested permissions by default and allows them with the dangerous flag",
     ({ home, llm, opencode }) =>
       Effect.gen(function* () {

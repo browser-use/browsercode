@@ -702,14 +702,15 @@ export const RunCommand = effectCmd({
             if (
               event.type === "message.updated" &&
               event.properties.sessionID === sessionID &&
-              event.properties.info.role === "assistant" &&
-              args.format !== "json" &&
-              toggles.get("start") !== true
+              event.properties.info.role === "assistant"
             ) {
-              UI.empty()
-              UI.println(`> ${event.properties.info.agent} · ${event.properties.info.modelID}`)
-              UI.empty()
-              toggles.set("start", true)
+              if (event.properties.info.finish && !event.properties.info.error) error = undefined
+              if (args.format !== "json" && toggles.get("start") !== true) {
+                UI.empty()
+                UI.println(`> ${event.properties.info.agent} · ${event.properties.info.modelID}`)
+                UI.empty()
+                toggles.set("start", true)
+              }
             }
 
             if (event.type === "message.part.updated") {

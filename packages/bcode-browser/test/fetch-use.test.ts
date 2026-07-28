@@ -12,15 +12,13 @@ import { FetchHttpClient } from "effect/unstable/http"
 import { FetchUse } from "../src/fetch-use"
 
 const haveProxySetting = !!process.env.BROWSER_USE_FETCH_URL || !!process.env.BROWSER_USE_FETCH_TOKEN
-const haveCredential =
-  (!!process.env.BROWSER_USE_FETCH_URL && !!process.env.BROWSER_USE_FETCH_TOKEN) ||
-  (!haveProxySetting && !!process.env.BROWSER_USE_API_KEY)
+const fetchUseSelected = haveProxySetting || !!process.env.BROWSER_USE_API_KEY
 
-test("layer constructs and exposes `enabled` reflecting env", async () => {
+test("layer selects fetch-use for direct or scoped-proxy configuration", async () => {
   const enabled = await Effect.gen(function* () {
     return (yield* FetchUse.Service).enabled
   }).pipe(Effect.provide(FetchUse.layer.pipe(Layer.provide(FetchHttpClient.layer))), Effect.runPromise)
-  expect(enabled).toBe(haveCredential)
+  expect(enabled).toBe(fetchUseSelected)
 })
 
 test.skipIf(!process.env.BROWSER_USE_API_KEY)("live: fetches httpbin and returns body + content-type", async () => {
@@ -79,7 +77,8 @@ test.each([
 ])("partial proxy configuration fails closed", async (options) => {
   const result = await Effect.gen(function* () {
     const service = yield* FetchUse.Service
-    expect(service.enabled).toBe(false)
+    // Keep this route selected so webfetch cannot silently use native HTTP.
+    expect(service.enabled).toBe(true)
     return yield* Effect.flip(service.fetch("https://example.com", { timeoutMs: 1_000 }))
   }).pipe(
     Effect.provide(FetchUse.makeLayer(options).pipe(Layer.provide(FetchHttpClient.layer))),

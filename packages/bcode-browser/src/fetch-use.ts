@@ -1,8 +1,8 @@
 // FetchUse — Effect service that proxies HTTP through Browser Use's fetch-use
 // cloud (Chrome JA4, HTTP/2 header order, session cookies). Decisions §3.3.
-// `enabled` is true when either a direct Browser Use API key or a scoped proxy
-// token is set; webfetch.ts combines this with the user's
-// `experimental.fetch_use` opencode.json setting.
+// `enabled` selects this route when direct credentials are complete or any
+// scoped-proxy setting is present. Partial proxy config stays selected and
+// errors instead of silently falling back to native HTTP.
 
 import { Context, Effect, Layer } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
@@ -37,7 +37,7 @@ export const makeLayer = (options: { proxyUrl: string; apiKey: string; proxyToke
       const proxyEnabled = options.proxyUrl.length > 0 && options.proxyToken.length > 0
       const directEnabled = !hasProxySetting && options.apiKey.length > 0
       return Service.of({
-        enabled: proxyEnabled || directEnabled,
+        enabled: hasProxySetting || directEnabled,
         fetch: (url, { timeoutMs }) =>
           Effect.gen(function* () {
             if (!proxyEnabled && !directEnabled) {

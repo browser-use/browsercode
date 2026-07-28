@@ -26,7 +26,8 @@ export const routingPolicy = [
   "When the user request itself names a bounded interaction and its website, call browser_delegate as the first browser tool. Include the starting URL in its narrow task; the leaf can navigate there.",
   "Do not load the browser-execute skill, inspect the page, rediscover the named control, reverse-engineer its destination URL, or perform the interaction with raw CDP first.",
   "When research is genuinely needed before the transition becomes known, do that research in BrowserCode, then call browser_delegate immediately once the starting page, operation, and observable done_when are clear.",
-  "After the leaf returns, inspect the page with browser_execute and independently verify its claim. If it gives up, take over and do not delegate the same transition again.",
+  "After the leaf returns, inspect the page with browser_execute and independently verify its claim. If it gives up, do not delegate the same transition again.",
+  "After a give_up, take over only when you have a materially different expert strategy. Verify an alleged access, proxy, authentication, or site-wide outage once; if confirmed, report the blocker instead of retrying equivalent navigations or interactions.",
   "Keep broad research, scraping, interpretation, and final-answer composition in BrowserCode.",
   "</browser_delegation>",
 ].join("\n")

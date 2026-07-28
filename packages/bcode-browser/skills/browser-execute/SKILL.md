@@ -21,8 +21,11 @@ the starting URL in its narrow task so the leaf can navigate there.
 Do not inspect the page to rediscover the named control, reverse-engineer its
 destination URL, or perform the interaction with raw CDP first. After the leaf
 returns, inspect the page with `browser_execute` and independently verify its
-claim. If it gives up, take over; do not delegate the same transition again.
-Keep broad research, scraping, interpretation, and final-answer composition in
+claim. If it gives up, do not delegate the same transition again. Take over
+only when you have a materially different expert strategy. Verify an alleged
+access, proxy, authentication, or site-wide outage once; if confirmed, report
+the blocker instead of retrying equivalent navigations or interactions. Keep
+broad research, scraping, interpretation, and final-answer composition in
 BrowserCode.
 
 ## Connecting

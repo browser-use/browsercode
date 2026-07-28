@@ -34,8 +34,11 @@ extract the recipe titles. Do not click the filter or open its filtered URL
 yourself.
 
 Do not save this tool as a last-ditch retry after many manual attempts. If the
-leaf gives up, take over with browser_execute; do not repeatedly delegate the
-same transition.
+leaf gives up, do not repeatedly delegate the same transition. Take over with
+browser_execute only when you have a materially different expert strategy.
+Verify an alleged access, proxy, authentication, or site-wide outage once; if
+confirmed, report the blocker instead of retrying equivalent navigations or
+interactions.
 
 The leaf agent knows it is a subagent and may give up. Its completion status is
 only a claim. After this tool returns, ALWAYS use browser_execute to inspect the

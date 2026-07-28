@@ -106,6 +106,7 @@ test("enables delegation only when the shared browser and leaf model are configu
     process.env.BROWSER_USE_DELEGATE_API_KEY = "test-key"
     expect(BrowserDelegate.enabled()).toBe(true)
     expect(BrowserDelegate.routingPolicy).toContain("call browser_delegate as the first browser tool")
+    expect(BrowserDelegate.routingPolicy).toContain("report the blocker instead of retrying")
   } finally {
     if (previousDelegateKey === undefined) delete process.env.BROWSER_USE_DELEGATE_API_KEY
     else process.env.BROWSER_USE_DELEGATE_API_KEY = previousDelegateKey

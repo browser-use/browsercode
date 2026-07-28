@@ -32,6 +32,7 @@ class DelegationRequest(BaseModel):
     schema_version: Literal[1]
     delegation_id: str = Field(min_length=1)
     parent_session_id: str = Field(min_length=1)
+    target_id: str | None = None
     task: str = Field(min_length=1)
     done_when: str = Field(min_length=1)
     limits: DelegationLimits
@@ -120,11 +121,19 @@ async def execute(request: DelegationRequest, directory: Path) -> DelegationResu
         auto_download_pdfs=False,
     )
     await browser.start()
+    if request.target_id:
+        target_session = await browser.get_or_create_cdp_session(
+            request.target_id, focus=True
+        )
+        await target_session.cdp_client.send.Target.activateTarget(
+            params={"targetId": request.target_id}
+        )
     write_json(
         directory / "initial_state.json",
         {
             "schema_version": 1,
             "delegation_id": request.delegation_id,
+            "target_id": request.target_id,
             "url": await browser.get_current_page_url(),
             "title": await browser.get_current_page_title(),
             "captured_at": datetime.now(UTC).isoformat(),
@@ -160,6 +169,7 @@ DONE_WHEN
         "session_id": request.parent_session_id,
         "input": {
             "delegation_id": request.delegation_id,
+            "target_id": request.target_id,
             "task": request.task,
             "done_when": request.done_when,
             "limits": request.limits.model_dump(mode="json"),

@@ -53,6 +53,7 @@ export type Result = Schema.Schema.Type<typeof resultSchema>
 export interface ExecuteContext {
   readonly delegationID: string
   readonly parentSessionID: string
+  readonly targetID?: string
   readonly artifactRoot: string
   readonly indexPath: string
   readonly apiKey: string
@@ -85,6 +86,7 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
             schema_version: 1,
             delegation_id: delegationID,
             parent_session_id: ctx.parentSessionID,
+            target_id: ctx.targetID ?? null,
             task: args.task,
             done_when: args.done_when,
             limits: {

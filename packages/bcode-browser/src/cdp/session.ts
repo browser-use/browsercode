@@ -46,6 +46,7 @@ export class Session implements Transport {
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private activeSessionId: string | undefined;
+  private activeTargetId: string | undefined;
   private eventListeners: Array<(method: string, params: unknown, sessionId?: string) => void> = [];
   private callResultListeners: Array<(method: string, params: unknown, result: unknown) => void> = [];
 
@@ -151,16 +152,22 @@ export class Session implements Transport {
   async use(targetId: string): Promise<string> {
     const r = await this._call('Target.attachToTarget', { targetId, flatten: true }) as { sessionId: string };
     this.activeSessionId = r.sessionId;
+    this.activeTargetId = targetId;
     return r.sessionId;
   }
 
   /** Set the active sessionId directly (e.g. one you already attached). */
-  setActiveSession(sessionId: string | undefined): void {
+  setActiveSession(sessionId: string | undefined, targetId?: string): void {
     this.activeSessionId = sessionId;
+    this.activeTargetId = targetId;
   }
 
   getActiveSession(): string | undefined {
     return this.activeSessionId;
+  }
+
+  getActiveTarget(): string | undefined {
+    return this.activeTargetId;
   }
 
   /** Subscribe to all CDP events. Returns an unsubscribe fn. */
@@ -423,4 +430,3 @@ async function tryReadDevToolsActivePort(
     return undefined;
   }
 }
-

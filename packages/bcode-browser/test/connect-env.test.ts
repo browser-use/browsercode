@@ -96,3 +96,13 @@ test("BU_CDP_WS pointing at a dead port surfaces the error (no fallback to OS sc
     expect(threw).toBe(true)
   })
 })
+
+test("setActiveSession tracks the selected target for delegation handoff", () => {
+  const session = new Session()
+  session.setActiveSession("session-id", "target-id")
+  expect(session.getActiveSession()).toBe("session-id")
+  expect(session.getActiveTarget()).toBe("target-id")
+
+  session.setActiveSession(undefined)
+  expect(session.getActiveTarget()).toBeUndefined()
+})

@@ -3,6 +3,7 @@
 import path from "path"
 import { Effect, Schema } from "effect"
 import { BrowserDelegate } from "@browser-use/bcode-browser/browser-delegate"
+import { SessionStore } from "@browser-use/bcode-browser/session-store"
 import { serializeTurnSpanContext } from "@browser-use/bcode-laminar/span"
 import { InstanceState } from "@/effect/instance-state"
 import * as Tool from "./tool"
@@ -29,6 +30,7 @@ export const BrowserDelegateTool = Tool.define(
           const result = yield* BrowserDelegate.execute(args, {
             delegationID: ctx.callID ?? crypto.randomUUID(),
             parentSessionID: ctx.sessionID,
+            targetID: SessionStore.get(ctx.sessionID).getActiveTarget(),
             artifactRoot: process.env.BROWSER_DELEGATION_ROOT ?? defaultRoot,
             indexPath: process.env.BROWSER_DELEGATION_INDEX ?? path.join(defaultRoot, "delegations.json"),
             apiKey,

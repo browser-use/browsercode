@@ -69,6 +69,7 @@ test("persists a compact delegation receipt and top-level index", async () => {
       {
         delegationID: "call_test",
         parentSessionID: "session_test",
+        targetID: "target_test",
         artifactRoot: path.join(directory, "delegations"),
         indexPath: path.join(directory, "delegations.json"),
         apiKey: "test-key",
@@ -84,6 +85,7 @@ test("persists a compact delegation receipt and top-level index", async () => {
   ).toMatchObject({
     delegation_id: "call_test",
     parent_session_id: "session_test",
+    target_id: "target_test",
     limits: { max_steps: 8, max_actions_per_step: 3, timeout_seconds: 120 },
   })
   expect(JSON.parse(await fs.readFile(path.join(directory, "delegations.json"), "utf8"))).toEqual([

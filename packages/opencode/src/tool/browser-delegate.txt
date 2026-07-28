@@ -13,6 +13,8 @@ filesystem work, and access/authentication recovery in BrowserCode.
 
 Give the leaf all known values and required return fields. `done_when` must
 name both the visible final evidence and the exact payload it must return.
+Every field for every record must be directly observed, never inferred from a
+collection title or neighboring record.
 The receipt contains browser-observed final state, its post-action screenshot,
 parameterized actions, and extracted content. Use that evidence directly. Do
 not load browser_execute merely to repeat a successful low-risk state or

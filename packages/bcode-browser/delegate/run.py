@@ -98,6 +98,9 @@ visibly satisfied. You do not own the user's overall task or final answer.
 
 Your done text is the receipt used by the parent: include the exact requested
 values, records, and links plus any uncertainty. Never return only "done".
+Directly observe every requested field for every returned record. Never infer
+a missing record field from a collection title, a neighboring record, or a
+pattern shared by other records.
 
 If the episode is ambiguous, blocked, requires guessing, filesystem work,
 JavaScript/API reverse engineering, or more work than the budget allows, call
@@ -196,7 +199,7 @@ async def observe_browser_state(
 ) -> ObservedBrowserState:
     captured_at = datetime.now(UTC).isoformat()
     try:
-        async with asyncio.timeout(20):
+        async with asyncio.timeout(10):
             state = await browser.get_browser_state_summary(include_screenshot=True)
         page_excerpt, truncated = compact_excerpt(state.dom_state.llm_representation())
         screenshot_artifact: str | None = None
@@ -230,24 +233,100 @@ async def observe_browser_state(
             screenshot_artifact=screenshot_artifact,
             captured_at=captured_at,
         )
-    except Exception as error:  # noqa: BLE001 - final evidence is best-effort
+    except Exception:  # noqa: BLE001 - direct CDP fallback remains available
+        return await observe_browser_state_with_cdp(
+            browser=browser,
+            directory=directory,
+            requested_target_id=target_id,
+            captured_at=captured_at,
+        )
+
+
+async def observe_browser_state_with_cdp(
+    browser: Browser,
+    directory: Path,
+    requested_target_id: str | None,
+    captured_at: str,
+) -> ObservedBrowserState:
+    """Capture a compact state directly when Browser Use DOM serialization stalls."""
+    errors: list[str] = []
+    url = ""
+    title = ""
+    current_target_id = requested_target_id
+    tabs: list[ObservedTab] = []
+    page_excerpt = ""
+    screenshot_artifact: str | None = None
+
+    try:
+        target_info = await browser.get_current_target_info()
+        if target_info:
+            current_target_id = target_info.get("targetId") or current_target_id
+            url = str(target_info.get("url") or "")
+            title = str(target_info.get("title") or "")
+        tabs = [
+            ObservedTab(target_id=tab.target_id, url=tab.url, title=tab.title)
+            for tab in (await browser.get_tabs())[:10]
+        ]
+    except Exception as error:  # noqa: BLE001 - preserve partial final evidence
+        errors.append(f"tab capture {type(error).__name__}: {error}")
+
+    try:
+        cdp_session = await browser.get_or_create_cdp_session(
+            current_target_id, focus=False
+        )
+        result = await asyncio.wait_for(
+            cdp_session.cdp_client.send.Runtime.evaluate(
+                params={
+                    "expression": """
+(() => ({
+  url: location.href,
+  title: document.title,
+  text: (document.body?.innerText || '').slice(0, 12000)
+}))()
+""".strip(),
+                    "returnByValue": True,
+                },
+                session_id=cdp_session.session_id,
+            ),
+            timeout=8,
+        )
+        value = result.get("result", {}).get("value") or {}
+        url = str(value.get("url") or url)
+        title = str(value.get("title") or title)
+        page_excerpt = str(value.get("text") or "")
+    except Exception as error:  # noqa: BLE001 - preserve partial final evidence
+        errors.append(f"text capture {type(error).__name__}: {error}")
+
+    try:
+        screenshot = await asyncio.wait_for(
+            browser.take_screenshot(full_page=False), timeout=8
+        )
+        screenshot_artifact = "final_state.png"
+        (directory / screenshot_artifact).write_bytes(screenshot)
+    except Exception as error:  # noqa: BLE001 - text evidence can still succeed
+        errors.append(f"screenshot capture {type(error).__name__}: {error}")
+
+    if not url or not title:
         url = ""
         title = ""
-        capture_error = f"{type(error).__name__}: {error}"
         try:
             url = await browser.get_current_page_url()
             title = await browser.get_current_page_title()
         except Exception as fallback_error:  # noqa: BLE001 - preserve both failures
-            capture_error += (
+            errors.append(
                 f"; fallback {type(fallback_error).__name__}: {fallback_error}"
             )
-        return ObservedBrowserState(
-            target_id=target_id,
-            url=url,
-            title=title,
-            captured_at=captured_at,
-            capture_error=capture_error,
-        )
+
+    return ObservedBrowserState(
+        target_id=current_target_id,
+        url=url,
+        title=title,
+        tabs=tabs,
+        page_excerpt=page_excerpt,
+        screenshot_artifact=screenshot_artifact,
+        captured_at=captured_at,
+        capture_error="; ".join(errors),
+    )
 
 
 async def execute(request: DelegationRequest, directory: Path) -> DelegationResult:

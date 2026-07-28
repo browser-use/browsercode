@@ -28,19 +28,25 @@ export class Service extends Context.Service<Service, {
   readonly fetch: (url: string, opts: { timeoutMs: number }) => Effect.Effect<FetchResult, Error>
 }>()("@browser-use/FetchUse") {}
 
-export const makeLayer = (options: { endpoint: string; apiKey: string; proxyToken: string }) =>
+export const makeLayer = (options: { proxyUrl: string; apiKey: string; proxyToken: string }) =>
   Layer.effect(
     Service,
     Effect.gen(function* () {
       const http = yield* HttpClient.HttpClient
+      const hasProxySetting = options.proxyUrl.length > 0 || options.proxyToken.length > 0
+      const proxyEnabled = options.proxyUrl.length > 0 && options.proxyToken.length > 0
+      const directEnabled = !hasProxySetting && options.apiKey.length > 0
       return Service.of({
-        enabled: options.proxyToken.length > 0 || options.apiKey.length > 0,
+        enabled: proxyEnabled || directEnabled,
         fetch: (url, { timeoutMs }) =>
           Effect.gen(function* () {
-            const auth = options.proxyToken
+            if (!proxyEnabled && !directEnabled) {
+              return yield* Effect.fail(new Error("fetch-use credentials are missing or partially configured"))
+            }
+            const auth = proxyEnabled
               ? { Authorization: `Bearer ${options.proxyToken}` }
               : { "X-Browser-Use-API-Key": options.apiKey }
-            const request = yield* HttpClientRequest.post(options.endpoint).pipe(
+            const request = yield* HttpClientRequest.post(proxyEnabled ? options.proxyUrl : DEFAULT_ENDPOINT).pipe(
               HttpClientRequest.setHeaders({ "Content-Type": "application/json", ...auth }),
               HttpClientRequest.bodyJson({ url, timeout_ms: timeoutMs }),
             )
@@ -62,7 +68,7 @@ export const makeLayer = (options: { endpoint: string; apiKey: string; proxyToke
   )
 
 export const layer = makeLayer({
-  endpoint: process.env.BROWSER_USE_FETCH_URL ?? DEFAULT_ENDPOINT,
+  proxyUrl: process.env.BROWSER_USE_FETCH_URL ?? "",
   apiKey: process.env.BROWSER_USE_API_KEY ?? "",
   proxyToken: process.env.BROWSER_USE_FETCH_TOKEN ?? "",
 })

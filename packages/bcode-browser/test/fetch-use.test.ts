@@ -53,7 +53,7 @@ test("scoped proxy token uses bearer auth instead of the API-key header", async 
     }).pipe(
       Effect.provide(
         FetchUse.makeLayer({
-          endpoint: server.url.toString(),
+          proxyUrl: server.url.toString(),
           apiKey: "",
           proxyToken: "v4rt_test",
         }).pipe(Layer.provide(FetchHttpClient.layer)),
@@ -68,4 +68,20 @@ test("scoped proxy token uses bearer auth instead of the API-key header", async 
   } finally {
     server.stop(true)
   }
+})
+
+test.each([
+  { proxyUrl: "https://proxy.example/fetch", proxyToken: "", apiKey: "bu_secret" },
+  { proxyUrl: "", proxyToken: "v4rt_secret", apiKey: "bu_secret" },
+])("partial proxy configuration fails closed", async (options) => {
+  const result = await Effect.gen(function* () {
+    const service = yield* FetchUse.Service
+    expect(service.enabled).toBe(false)
+    return yield* Effect.flip(service.fetch("https://example.com", { timeoutMs: 1_000 }))
+  }).pipe(
+    Effect.provide(FetchUse.makeLayer(options).pipe(Layer.provide(FetchHttpClient.layer))),
+    Effect.runPromise,
+  )
+
+  expect(result.message).toContain("partially configured")
 })

@@ -38,7 +38,7 @@ import { sessionCurrentTurnSpan } from "./state"
 import { otelSpanIdToUUID, type StringUUID } from "./utils"
 
 const SDK_VERSION = "bcode-laminar-0.1"
-const SPAWNING_TOOL_NAMES = ["task"]
+const SPAWNING_TOOL_NAMES = ["task", "browser_delegate"]
 type LogFn = (level: "debug" | "info" | "warn" | "error", message: string) => void
 
 export class OpenCodeLaminarSpanProcessor implements SpanProcessor {

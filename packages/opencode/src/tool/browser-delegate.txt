@@ -1,0 +1,16 @@
+Delegate one short, obvious browser state transition to a cheap Browser Use leaf agent.
+
+Use this tool only when:
+- the current operation is narrow and browser-only;
+- the stopping condition is directly observable on the page;
+- roughly eight or fewer model steps should be sufficient;
+- the parent can verify the resulting page afterward.
+
+Good delegations include filling a bounded form, applying known filters,
+navigating to a known record, or revealing a known result. Do not delegate
+broad research, exhaustive scraping, final-answer composition, filesystem
+work, or ambiguous interpretation.
+
+The leaf agent knows it is a subagent and may give up. Its completion status is
+only a claim. After this tool returns, ALWAYS use browser_execute to inspect the
+browser and independently verify done_when before relying on the result.

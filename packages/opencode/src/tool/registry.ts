@@ -15,6 +15,7 @@ import { TodoWriteTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { BrowserExecuteTool } from "./browser-execute"
+import { BrowserDelegateTool } from "./browser-delegate"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
 import * as Tool from "./tool"
@@ -112,6 +113,7 @@ const layer = Layer.effect(
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
     const browserExecute = yield* BrowserExecuteTool
+    const browserDelegate = yield* BrowserDelegateTool
     const agent = yield* Agent.Service
     const codeMode = flags.experimentalCodeMode ? yield* Effect.promise(() => import("./code-mode")) : undefined
     const codeModeTool = codeMode ? yield* codeMode.CodeModeTool : undefined
@@ -218,6 +220,7 @@ const layer = Layer.effect(
           search: Tool.init(websearch),
           skill: Tool.init(skilltool),
           browserExecute: Tool.init(browserExecute),
+          browserDelegate: Tool.init(browserDelegate),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
@@ -242,6 +245,7 @@ const layer = Layer.effect(
             tool.search,
             tool.skill,
             tool.browserExecute,
+            tool.browserDelegate,
             tool.patch,
             ...(tool.execute ? [tool.execute] : []),
             ...(flags.experimentalLspTool ? [tool.lsp] : []),

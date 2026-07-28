@@ -7,6 +7,7 @@
 
 import { type Context, ROOT_CONTEXT, type Span, trace, TraceFlags } from "@opentelemetry/api"
 
+import { sessionCurrentTurnSpan } from "./state"
 import {
   PARENT_SPAN_IDS_PATH,
   PARENT_SPAN_PATH,
@@ -14,7 +15,13 @@ import {
   SPAN_INPUT,
   SPAN_TYPE,
 } from "./attributes"
-import { isStringUUID, type StringUUID, uuidToOtelSpanId, uuidToOtelTraceId } from "./utils"
+import {
+  isStringUUID,
+  otelSpanIdToUUID,
+  type StringUUID,
+  uuidToOtelSpanId,
+  uuidToOtelTraceId,
+} from "./utils"
 
 const TURN_TRACER_NAME = "@browser-use/bcode-laminar"
 
@@ -90,4 +97,21 @@ const parseLaminarSpanContext = (input: string): ParsedSpanContext | undefined =
   } catch {
     return undefined
   }
+}
+
+export const serializeTurnSpanContext = (sessionId: string): string | undefined => {
+  const span = sessionCurrentTurnSpan[sessionId]
+  if (!span) return process.env.LMNR_PARENT_SPAN_CONTEXT
+  const current = span.spanContext()
+  const parent = process.env.LMNR_PARENT_SPAN_CONTEXT
+    ? parseLaminarSpanContext(process.env.LMNR_PARENT_SPAN_CONTEXT)
+    : undefined
+  const spanId = otelSpanIdToUUID(current.spanId)
+  return JSON.stringify({
+    traceId: otelSpanIdToUUID(current.traceId),
+    spanId,
+    isRemote: false,
+    spanPath: [...(parent?.spanPath ?? []), "turn"],
+    spanIdsPath: [...(parent?.spanIdsPath ?? []), spanId],
+  })
 }

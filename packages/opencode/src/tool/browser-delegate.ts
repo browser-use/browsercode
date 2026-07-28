@@ -36,6 +36,19 @@ export const BrowserDelegateTool = Tool.define(
             parentSpanContext: serializeTurnSpanContext(ctx.sessionID),
             model: process.env.BROWSER_USE_DELEGATE_MODEL,
           })
+          const finalTargetID = result.observed_state_after?.target_id
+          if (finalTargetID) {
+            yield* Effect.promise(async () => {
+              try {
+                const session = SessionStore.get(ctx.sessionID)
+                if (!session.isConnected()) await session.connect()
+                if (session.getActiveTarget() !== finalTargetID) await session.use(finalTargetID)
+              } catch {
+                // The receipt still contains the exact observed target. A later
+                // browser_execute call can reconnect if deterministic handoff fails.
+              }
+            })
+          }
           return {
             title: `browser_delegate: ${result.status}`,
             output: JSON.stringify(
@@ -43,8 +56,13 @@ export const BrowserDelegateTool = Tool.define(
                 status: result.status,
                 summary: result.summary,
                 action_digest: result.action_digest,
+                action_details: result.action_details,
+                extracted_content: result.extracted_content,
                 done_condition_claimed: result.done_condition_claimed,
+                initial_url: result.initial_url,
+                initial_title: result.initial_title,
                 final_url: result.final_url,
+                observed_state_after: result.observed_state_after,
                 blocker: result.blocker,
                 uncertainties: result.uncertainties,
                 metrics: result.metrics,

@@ -2,16 +2,16 @@
 //
 // BrowserCode remains the planner and verifier. This tool starts a short-lived
 // Python subprocess that attaches a Browser Use Agent to the same CDP endpoint,
-// performs one explicitly bounded state transition, persists its full history,
-// and returns only a compact receipt to the parent model.
+// performs one explicitly bounded browser episode, persists its full history,
+// and returns a browser-observed receipt to the parent model.
 
 import fs from "fs/promises"
 import path from "path"
 import { Effect, Schema } from "effect"
 
-const MAX_STEPS = 8
+const MAX_STEPS = 25
 const MAX_ACTIONS_PER_STEP = 3
-const PROCESS_TIMEOUT_MS = 120_000
+const PROCESS_TIMEOUT_MS = 300_000
 const SHUTDOWN_GRACE_MS = 5_000
 
 export const enabled = () =>
@@ -22,24 +22,24 @@ export const enabled = () =>
 
 export const routingPolicy = [
   "<browser_delegation>",
-  "Browser Use is the leaf executor for short, obvious UI transitions; BrowserCode remains the planner and verifier.",
-  "When the user request itself names a bounded interaction and its website, call browser_delegate as the first browser tool. Include the starting URL in its narrow task; the leaf can navigate there.",
-  "Do not load the browser-execute skill, inspect the page, rediscover the named control, reverse-engineer its destination URL, or perform the interaction with raw CDP first.",
-  "When research is genuinely needed before the transition becomes known, do that research in BrowserCode, then call browser_delegate immediately once the starting page, operation, and observable done_when are clear.",
-  "After the leaf returns, inspect the page with browser_execute and independently verify its claim. If it gives up, do not delegate the same transition again.",
-  "After a give_up, take over only when you have a materially different expert strategy. Verify an alleged access, proxy, authentication, or site-wide outage once; if confirmed, report the blocker instead of retrying equivalent navigations or interactions.",
-  "Keep broad research, scraping, interpretation, and final-answer composition in BrowserCode.",
+  "Browser Use is a cheap executor for a whole closed browser episode; BrowserCode owns planning, hard research, recovery, and the final answer.",
+  "Delegate before starting an episode when its start URL is known, it is mostly visible click/type/scroll/read work on one site, its finish and return fields are exactly observable, and you expect about 20 or fewer model steps.",
+  "Good episodes include completing a form or rate quote, applying filters and returning a bounded set of rows, or visiting a known finite list of pages. Delegate the whole episode, not one click from it.",
+  "Keep source discovery and judgment, ambiguous or open-ended research, unknown-size exhaustive collection, CDP/JavaScript/API reverse engineering, filesystem work, and access/authentication recovery in BrowserCode.",
+  "Give the leaf every known value and required return field. Make done_when name the exact visible evidence and payload required.",
+  "Use observed_state_after, action_details, and extracted_content as postcondition evidence. Call browser_execute only when that evidence is missing, contradictory, or the action is high-stakes.",
+  "If the leaf gives up, take over and do not delegate another episode on the same tab.",
   "</browser_delegation>",
 ].join("\n")
 
 export const parameters = Schema.Struct({
   task: Schema.String.annotate({
     description:
-      "One narrow browser operation for the leaf executor. Describe only what it should do now, not the overall user task.",
+      "One complete, bounded browser episode. Include its start URL, all known values, and the exact data the leaf must return.",
   }),
   done_when: Schema.String.annotate({
     description:
-      "The directly observable browser state at which the leaf executor must stop. BrowserCode must verify this state after the tool returns.",
+      "The directly observable final browser state and exact result payload required before the leaf may claim success.",
   }),
 })
 
@@ -51,8 +51,31 @@ const resultSchema = Schema.Struct({
   status: Schema.Literals(["completed", "gave_up", "timed_out", "failed"]),
   summary: Schema.String,
   action_digest: Schema.Array(Schema.String),
+  action_details: Schema.Array(Schema.String),
+  extracted_content: Schema.Array(Schema.String),
   done_condition_claimed: Schema.Boolean,
+  initial_url: Schema.String,
+  initial_title: Schema.String,
   final_url: Schema.String,
+  observed_state_after: Schema.NullOr(
+    Schema.Struct({
+      target_id: Schema.NullOr(Schema.String),
+      url: Schema.String,
+      title: Schema.String,
+      tabs: Schema.Array(
+        Schema.Struct({
+          target_id: Schema.String,
+          url: Schema.String,
+          title: Schema.String,
+        }),
+      ),
+      page_excerpt: Schema.String,
+      page_excerpt_truncated: Schema.Boolean,
+      screenshot_artifact: Schema.NullOr(Schema.String),
+      captured_at: Schema.String,
+      capture_error: Schema.NullOr(Schema.String),
+    }),
+  ),
   blocker: Schema.NullOr(Schema.String),
   uncertainties: Schema.Array(Schema.String),
   metrics: Schema.Struct({
@@ -87,6 +110,7 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
       if (!cdpUrl) throw new Error("browser_delegate requires BU_CDP_WS or BU_CDP_URL")
 
       const delegationID = ctx.delegationID.replaceAll(/[^a-zA-Z0-9._-]/g, "_")
+      await rejectAfterFailedDelegation(ctx.indexPath, ctx.targetID)
       const directory = path.join(ctx.artifactRoot, delegationID)
       const requestPath = path.join(directory, "request.json")
       const resultPath = path.join(directory, "result.json")
@@ -173,10 +197,15 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
               schema_version: 1,
               delegation_id: delegationID,
               status: "timed_out",
-              summary: "Browser Use reached the 120 second delegation deadline.",
+              summary: "Browser Use reached the 300 second delegation deadline.",
               action_digest: [],
+              action_details: [],
+              extracted_content: [],
               done_condition_claimed: false,
+              initial_url: "",
+              initial_title: "",
               final_url: "",
+              observed_state_after: null,
               blocker: "delegation deadline reached",
               uncertainties: [],
               metrics: {
@@ -204,6 +233,7 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
       const result = Schema.decodeUnknownSync(resultSchema)(await Bun.file(resultPath).json())
       await appendIndex(ctx.indexPath, {
         delegation_id: delegationID,
+        target_id: result.observed_state_after?.target_id ?? ctx.targetID ?? null,
         task: args.task,
         done_when: args.done_when,
         status: result.status,
@@ -219,6 +249,25 @@ const appendIndex = async (indexPath: string, entry: Record<string, unknown>) =>
   const current = (await file.exists()) ? await file.json() : []
   if (!Array.isArray(current)) throw new Error(`${indexPath} must contain a JSON array`)
   await Bun.write(indexPath, JSON.stringify([...current, entry], null, 2) + "\n")
+}
+
+const rejectAfterFailedDelegation = async (indexPath: string, targetID: string | undefined) => {
+  if (!targetID) return
+  const file = Bun.file(indexPath)
+  if (!(await file.exists())) return
+  const current: unknown = await file.json()
+  if (!Array.isArray(current)) throw new Error(`${indexPath} must contain a JSON array`)
+  const priorFailure = current.find(
+    (entry): entry is Record<string, unknown> =>
+      typeof entry === "object" &&
+      entry !== null &&
+      entry.target_id === targetID &&
+      ["gave_up", "timed_out", "failed"].includes(String(entry.status)),
+  )
+  if (!priorFailure) return
+  throw new Error(
+    `Browser Use already ${String(priorFailure.status)} on target ${targetID}; BrowserCode must take over this tab`,
+  )
 }
 
 const traceID = (context: string | undefined): string | null => {

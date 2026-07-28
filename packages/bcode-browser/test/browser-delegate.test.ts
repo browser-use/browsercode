@@ -31,8 +31,23 @@ Path(args.result).write_text(json.dumps({
     "status": "completed",
     "summary": "Reached the requested page.",
     "action_digest": ["input_text, click"],
+    "action_details": ["step 1: {\\"input\\":{\\"text\\":\\"10019\\"}}"],
+    "extracted_content": ["Ground rate: $18.42"],
     "done_condition_claimed": True,
+    "initial_url": "https://example.com/form",
+    "initial_title": "Rate form",
     "final_url": "https://example.com/results",
+    "observed_state_after": {
+        "target_id": request["target_id"],
+        "url": "https://example.com/results",
+        "title": "Rate results",
+        "tabs": [],
+        "page_excerpt": "Ground rate: $18.42",
+        "page_excerpt_truncated": False,
+        "screenshot_artifact": None,
+        "captured_at": "2026-07-28T00:00:00+00:00",
+        "capture_error": None,
+    },
     "blocker": None,
     "uncertainties": [],
     "metrics": {
@@ -79,6 +94,7 @@ test("persists a compact delegation receipt and top-level index", async () => {
 
   expect(result.status).toBe("completed")
   expect(result.action_digest).toEqual(["input_text, click"])
+  expect(result.observed_state_after?.page_excerpt).toContain("$18.42")
   expect(result.artifact_directory).toBe(path.join(directory, "delegations", "call_test"))
   expect(
     JSON.parse(await fs.readFile(path.join(directory, "delegations", "call_test", "request.json"), "utf8")),
@@ -86,7 +102,7 @@ test("persists a compact delegation receipt and top-level index", async () => {
     delegation_id: "call_test",
     parent_session_id: "session_test",
     target_id: "target_test",
-    limits: { max_steps: 8, max_actions_per_step: 3, timeout_seconds: 120 },
+    limits: { max_steps: 25, max_actions_per_step: 3, timeout_seconds: 300 },
   })
   expect(JSON.parse(await fs.readFile(path.join(directory, "delegations.json"), "utf8"))).toEqual([
     expect.objectContaining({
@@ -105,12 +121,39 @@ test("enables delegation only when the shared browser and leaf model are configu
     expect(BrowserDelegate.enabled()).toBe(false)
     process.env.BROWSER_USE_DELEGATE_API_KEY = "test-key"
     expect(BrowserDelegate.enabled()).toBe(true)
-    expect(BrowserDelegate.routingPolicy).toContain("call browser_delegate as the first browser tool")
-    expect(BrowserDelegate.routingPolicy).toContain("report the blocker instead of retrying")
+    expect(BrowserDelegate.routingPolicy).toContain("Delegate before starting an episode")
+    expect(BrowserDelegate.routingPolicy).toContain("do not delegate another episode on the same tab")
   } finally {
     if (previousDelegateKey === undefined) delete process.env.BROWSER_USE_DELEGATE_API_KEY
     else process.env.BROWSER_USE_DELEGATE_API_KEY = previousDelegateKey
     if (previousApiKey === undefined) delete process.env.BROWSER_USE_API_KEY
     else process.env.BROWSER_USE_API_KEY = previousApiKey
   }
+})
+
+test("rejects another delegation after a failed episode on the same tab", async () => {
+  const indexPath = path.join(directory, "blocked-delegations.json")
+  await fs.writeFile(
+    indexPath,
+    JSON.stringify([{ delegation_id: "prior", target_id: "target_blocked", status: "gave_up" }]),
+  )
+
+  await expect(
+    Effect.runPromise(
+      BrowserDelegate.execute(
+        {
+          task: "Try the same blocked workflow again.",
+          done_when: "The workflow is complete.",
+        },
+        {
+          delegationID: "call_blocked",
+          parentSessionID: "session_test",
+          targetID: "target_blocked",
+          artifactRoot: path.join(directory, "blocked-delegations"),
+          indexPath,
+          apiKey: "test-key",
+        },
+      ),
+    ),
+  ).rejects.toThrow("BrowserCode must take over this tab")
 })

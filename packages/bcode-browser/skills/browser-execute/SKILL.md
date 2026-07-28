@@ -174,8 +174,7 @@ console.log(JSON.stringify(titles))
 ## Guardrails
 - Top-level `import` statements inside the snippet body are not allowed. Use `await import(...)` instead.
 - No CPU-bound infinite loops without `await` — they ignore the timeout. Insert `await new Promise(r => setTimeout(r, 0))` to yield.
-- A `browser_execute` call defaults to 60 seconds. For intentionally longer bounded work, set the tool's top-level `timeout` in milliseconds (maximum 600000). A CDP command's inner timeout does not extend the tool timeout.
-- Prefer small batches that finish well within the tool timeout. Log progress as each batch completes so a timeout can return useful partial output, then continue from the last completed batch.
+- `browser_execute` defaults to 60s (max 600s). For longer work, set the tool's top-level `timeout`; inner CDP timeouts do not extend it. Keep batches small and log progress—timeout errors return recent logs.
 
 ## Console
 - `console.log`, `console.error`, `console.warn`, `console.info`, `console.debug` are all captured and streamed to the user. Treat them as your stdout. Other `console.*` methods write to bcode's stderr without being captured into the tool result.

@@ -43,13 +43,44 @@
 
 import fs from "fs/promises"
 import path from "path"
-import { Effect, Schema } from "effect"
+import { Effect, Schema, Semaphore } from "effect"
 import { SessionStore } from "./session-store"
 import { Skills } from "./skills"
 
 const DEFAULT_TIMEOUT_MS = 60 * 1000
 const MAX_TIMEOUT_MS = 10 * 60 * 1000
-const MAX_TIMEOUT_OUTPUT_LENGTH = 30_000
+const MAX_TIMEOUT_OUTPUT_BYTES = 8 * 1024
+const TIMEOUT_OUTPUT_TRUNCATED = "[partial console output truncated; showing final bytes]\n"
+
+const executionLocks = new Map<string, { semaphore: Semaphore.Semaphore; users: number }>()
+
+const serialized = <A, E, R>(sessionID: string, effect: () => Effect.Effect<A, E, R>) =>
+  Effect.suspend(() => {
+    const existing = executionLocks.get(sessionID)
+    const entry = existing ?? { semaphore: Semaphore.makeUnsafe(1), users: 0 }
+    if (!existing) executionLocks.set(sessionID, entry)
+    entry.users++
+    return entry.semaphore
+      .withPermits(1)(Effect.suspend(effect))
+      .pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            entry.users--
+            if (entry.users === 0 && executionLocks.get(sessionID) === entry) executionLocks.delete(sessionID)
+          }),
+        ),
+      )
+  })
+
+const timeoutOutput = (output: string) => {
+  const bytes = Buffer.from(output, "utf8")
+  if (bytes.length <= MAX_TIMEOUT_OUTPUT_BYTES) return output
+
+  const markerBytes = Buffer.byteLength(TIMEOUT_OUTPUT_TRUNCATED)
+  let start = bytes.length - (MAX_TIMEOUT_OUTPUT_BYTES - markerBytes)
+  while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start++
+  return TIMEOUT_OUTPUT_TRUNCATED + bytes.subarray(start).toString("utf8")
+}
 
 // Field order matters: providers stream tool-call args in schema-declared
 // order, so the model commits to whichever field comes first. `code` is the
@@ -159,9 +190,9 @@ const serialize = (v: unknown): string => {
 export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string) {
   const skillsDir = yield* Effect.promise(() => Skills.resolveSkillsDir(dataDir))
 
-  const execute = (args: Parameters, ctx: ExecuteContext) => {
+  const executeLocked = (args: Parameters, ctx: ExecuteContext) => {
     const session = SessionStore.get(ctx.sessionID)
-    const captured = { output: "" }
+    const captured = { active: true, output: "" }
     return Effect.gen(function* () {
       yield* Effect.promise(() => fs.mkdir(ctx.workspaceDir, { recursive: true }))
 
@@ -171,6 +202,7 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
       })
 
       const tee = (...a: unknown[]) => {
+        if (!captured.active) return
         captured.output += a.map((x) => (typeof x === "string" ? x : serialize(x))).join(" ") + "\n"
         if (ctx.onChunk) Effect.runFork(ctx.onChunk(captured.output))
       }
@@ -193,12 +225,9 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
       // when `BCODE_SCREENSHOT_DIR` is set, also written to disk for
       // eval-judge consumption. Two consumers of one tap.
       //
-      // Concurrency note: parallel execute() calls against the same Session
-      // (rare but possible — different sessionIDs share no Session, but a
-      // single sessionID with two in-flight tool calls would) each subscribe
-      // independently and would each see all screenshots produced during
-      // their lifetime. Acceptable for v1; opencode tool calls within one
-      // assistant message are serialized anyway.
+      // Calls sharing a sessionID are serialized before resolving their
+      // Session, so a timed-out call can invalidate its object without
+      // disrupting the next queued call.
       const screenshots: CollectedScreenshot[] = []
       const dumpDir = process.env.BCODE_SCREENSHOT_DIR
       const startedAt = Date.now()
@@ -233,10 +262,8 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
         orElse: () =>
           Effect.gen(function* () {
             const timeout = Math.min(args.timeout ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS)
-            const output =
-              captured.output.length <= MAX_TIMEOUT_OUTPUT_LENGTH
-                ? captured.output
-                : "...\n\n" + captured.output.slice(-MAX_TIMEOUT_OUTPUT_LENGTH)
+            captured.active = false
+            const output = timeoutOutput(captured.output)
             const error = new Error(
               [
                 `browser_execute timed out after ${timeout} ms; CDP session was reset`,
@@ -251,6 +278,8 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
       }),
     )
   }
+
+  const execute = (args: Parameters, ctx: ExecuteContext) => serialized(ctx.sessionID, () => executeLocked(args, ctx))
 
   return { parameters, execute, skillsDir }
 })

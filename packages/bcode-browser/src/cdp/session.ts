@@ -51,6 +51,7 @@ export class Session implements Transport {
   private reattachPromise?: Promise<void>;
   private enabledDomains = new Map<string, Map<string, unknown>>();
   private invalidatedError?: Error;
+  private invalidation = new AbortController();
   private openingSockets = new Set<WebSocket>();
   private pendingWaiters = new Set<(error: Error) => void>();
   private eventListeners: Array<(method: string, params: unknown, sessionId?: string) => void> = [];
@@ -95,7 +96,7 @@ export class Session implements Transport {
 
     const timeoutMs = opts.timeoutMs ?? 5_000;
     if (opts.wsUrl || opts.profileDir) {
-      const wsUrl = await resolveWsUrl(opts, timeoutMs);
+      const wsUrl = await resolveWsUrl(opts, timeoutMs, this.invalidation.signal);
       this.throwIfInvalidated();
       await this.openWs(wsUrl, timeoutMs);
       this.throwIfInvalidated();
@@ -210,6 +211,7 @@ export class Session implements Transport {
   invalidate(error: Error): void {
     if (this.invalidatedError) return;
     this.invalidatedError = error;
+    this.invalidation.abort(error);
     const ws = this.ws;
     this.ws = undefined;
     this.activeSessionId = undefined;
@@ -474,10 +476,14 @@ function isMissingSessionError(error: unknown): boolean {
  * For auto-detect, call `session.connect()` with no args — it iterates
  * `detectBrowsers()` and picks the first browser whose WS accepts.
  */
-export async function resolveWsUrl(opts: ConnectOptions, timeoutMs: number): Promise<string> {
+export async function resolveWsUrl(
+  opts: ConnectOptions,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<string> {
   if (opts.wsUrl) return opts.wsUrl;
   if (opts.profileDir) {
-    const { port, path } = await readDevToolsActivePort(opts.profileDir, timeoutMs);
+    const { port, path } = await readDevToolsActivePort(opts.profileDir, timeoutMs, signal);
     return `ws://127.0.0.1:${port}${path}`;
   }
   throw new Error('resolveWsUrl needs { wsUrl } or { profileDir }. For auto-detect, call session.connect() directly.');
@@ -493,14 +499,20 @@ export async function resolveWsUrl(opts: ConnectOptions, timeoutMs: number): Pro
  * with a custom `--user-data-dir` (verified on macOS and Windows). For Way 2
  * with modern Chrome, prefer the `/json/version` -> wsUrl route instead.
  */
-async function readDevToolsActivePort(profileDir: string, timeoutMs: number): Promise<{ port: number; path: string }> {
+async function readDevToolsActivePort(
+  profileDir: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<{ port: number; path: string }> {
   const filePath = `${profileDir}/DevToolsActivePort`;
   const start = Date.now();
   const deadline = start + timeoutMs;
   let lastErr: unknown;
   while (Date.now() < deadline) {
+    throwIfAborted(signal);
     try {
       const text = (await Bun.file(filePath).text()).trim();
+      throwIfAborted(signal);
       const [portStr, path] = text.split('\n');
       const port = Number(portStr);
       if (!Number.isFinite(port)) throw new Error(`malformed port line: ${portStr}`);
@@ -510,8 +522,9 @@ async function readDevToolsActivePort(profileDir: string, timeoutMs: number): Pr
       }
       return { port, path };
     } catch (e) {
+      throwIfAborted(signal);
       lastErr = e;
-      await Bun.sleep(250);
+      await sleepUnlessAborted(250, signal);
     }
   }
   const elapsed = Date.now() - start;
@@ -520,6 +533,28 @@ async function readDevToolsActivePort(profileDir: string, timeoutMs: number): Pr
     `Note: Chrome 147+ may not write this file when launched with --user-data-dir. ` +
     `Try the /json/version fallback: fetch("http://127.0.0.1:<port>/json/version") -> webSocketDebuggerUrl, then session.connect({ wsUrl }).`,
   );
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error ? signal.reason : new Error('CDP session was reset');
+}
+
+function sleepUnlessAborted(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return Bun.sleep(ms);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      reject(signal.reason instanceof Error ? signal.reason : new Error('CDP session was reset'));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
 }
 
 /**

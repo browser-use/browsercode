@@ -271,11 +271,11 @@ test("overlapping execute calls do not clobber each other's console capture", as
   )
 })
 
-test("a timed-out snippet cannot send later CDP commands or reconnect", async () => {
+test("a timed-out snippet returns progress and a queued call uses a fresh session", async () => {
   const timedOutSessionID = "timeout-" + Math.random().toString(36).slice(2, 8)
   const timedOutWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-timeout-ws-"))
   const timedOutData = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-timeout-data-"))
-  let lateCommandCount = 0
+  let commandCount = 0
   const server = Bun.serve({
     port: 0,
     fetch(req, bunServer) {
@@ -285,7 +285,7 @@ test("a timed-out snippet cannot send later CDP commands or reconnect", async ()
       message(socket, raw) {
         const message = JSON.parse(String(raw))
         if (message.method !== "Runtime.evaluate") return
-        lateCommandCount++
+        commandCount++
         socket.send(JSON.stringify({ id: message.id, result: { result: { type: "boolean", value: true } } }))
       },
       close() {},
@@ -297,31 +297,59 @@ test("a timed-out snippet cannot send later CDP commands or reconnect", async ()
 
   try {
     await timedOutSession.connect({ wsUrl })
-    await expect(
-      Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const impl = yield* BrowserExecute.make(timedOutData)
-            return yield* impl.execute(
-              {
-                description: "Attempt command after timeout",
-                code: `console.log("completed batch 1");
-                       await new Promise((resolve) => setTimeout(resolve, 50));
-                       return session.Runtime.evaluate({ expression: "true" });`,
-                timeout: 10,
-              },
-              { sessionID: timedOutSessionID, workspaceDir: timedOutWorkspace },
-            )
-          }),
-        ),
+    const impl = await Effect.runPromise(BrowserExecute.make(timedOutData))
+    let started!: () => void
+    const firstOutput = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const timedOut = Effect.runPromise(
+      impl.execute(
+        {
+          description: "Attempt command after timeout",
+          code: `console.log("completed batch 1");
+                 await new Promise((resolve) => setTimeout(resolve, 50));
+                 return session.Runtime.evaluate({ expression: "late" });`,
+          timeout: 10,
+        },
+        {
+          sessionID: timedOutSessionID,
+          workspaceDir: timedOutWorkspace,
+          onChunk: () => Effect.sync(started),
+        },
       ),
-    ).rejects.toThrow(
-      "browser_execute timed out after 10 ms; CDP session was reset\n\n" +
-        "Partial console output before timeout:\ncompleted batch 1",
     )
+    await firstOutput
+
+    const next = Effect.runPromise(
+      impl.execute(
+        {
+          description: "Use replacement session",
+          code: `await session.connect({ wsUrl: ${JSON.stringify(wsUrl)} });
+                 console.log("replacement connected");
+                 return session.Runtime.evaluate({ expression: "next" });`,
+          timeout: 1000,
+        },
+        { sessionID: timedOutSessionID, workspaceDir: timedOutWorkspace },
+      ),
+    )
+    const [timedOutResult, nextResult] = await Promise.allSettled([timedOut, next])
+
+    expect(timedOutResult.status).toBe("rejected")
+    if (timedOutResult.status === "rejected") {
+      expect(timedOutResult.reason).toBeInstanceOf(Error)
+      expect(timedOutResult.reason.message).toBe(
+        "browser_execute timed out after 10 ms; CDP session was reset\n\n" +
+          "Partial console output before timeout:\ncompleted batch 1",
+      )
+    }
+    expect(nextResult.status).toBe("fulfilled")
+    if (nextResult.status === "fulfilled") {
+      expect(nextResult.value.output).toBe("replacement connected\n")
+      expect(JSON.parse(nextResult.value.result).result.value).toBe(true)
+    }
 
     await Bun.sleep(80)
-    expect(lateCommandCount).toBe(0)
+    expect(commandCount).toBe(1)
     expect(SessionStore.get(timedOutSessionID)).not.toBe(timedOutSession)
     await expect(timedOutSession.connect({ wsUrl })).rejects.toThrow("browser_execute timed out after 10 ms")
   } finally {
@@ -329,6 +357,54 @@ test("a timed-out snippet cannot send later CDP commands or reconnect", async ()
     server.stop(true)
     await Promise.all(
       [timedOutWorkspace, timedOutData].map((d) => fs.rm(d, { recursive: true, force: true })),
+    )
+  }
+})
+
+test("timeout output is byte-capped and capture stops after timeout", async () => {
+  const outputSessionID = "timeout-output-" + Math.random().toString(36).slice(2, 8)
+  const outputWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-timeout-output-ws-"))
+  const outputData = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-timeout-output-data-"))
+  const chunks: string[] = []
+
+  try {
+    const impl = await Effect.runPromise(BrowserExecute.make(outputData))
+    let failure: unknown
+    try {
+      await Effect.runPromise(
+        impl.execute(
+          {
+            description: "Cap timeout output",
+            code: `console.log("😀".repeat(6000));
+                   await new Promise((resolve) => setTimeout(resolve, 30));
+                   console.log("after timeout");`,
+            timeout: 10,
+          },
+          {
+            sessionID: outputSessionID,
+            workspaceDir: outputWorkspace,
+            onChunk: (output) => Effect.sync(() => chunks.push(output)),
+          },
+        ),
+      )
+    } catch (error) {
+      failure = error
+    }
+
+    expect(failure).toBeInstanceOf(Error)
+    const message = (failure as Error).message
+    const partial = message.split("Partial console output before timeout:\n")[1]!
+    expect(partial).toStartWith("[partial console output truncated; showing final bytes]\n")
+    expect(Buffer.byteLength(partial, "utf8")).toBeLessThanOrEqual(8 * 1024)
+    expect(partial).not.toContain("\uFFFD")
+
+    await Bun.sleep(60)
+    expect(chunks).toHaveLength(1)
+    expect(chunks[0]).not.toContain("after timeout")
+  } finally {
+    await SessionStore.evict(outputSessionID)
+    await Promise.all(
+      [outputWorkspace, outputData].map((d) => fs.rm(d, { recursive: true, force: true })),
     )
   }
 })
@@ -420,41 +496,26 @@ test("a tool timeout closes a WebSocket that is still connecting", async () => {
   }
 })
 
-test("an invalidated session cannot connect after profile resolution finishes", async () => {
+test("profile resolution stops promptly when the session is invalidated", async () => {
   const resolvingSessionID = "resolving-" + Math.random().toString(36).slice(2, 8)
   const resolvingProfile = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-resolving-profile-"))
   const resolvingSession = SessionStore.get(resolvingSessionID)
-  let openedSockets = 0
-  const server = Bun.serve({
-    port: 0,
-    fetch(req, bunServer) {
-      return bunServer.upgrade(req) ? undefined : new Response("nope", { status: 400 })
-    },
-    websocket: {
-      open() {
-        openedSockets++
-      },
-      message() {},
-      close() {},
-    },
-  })
-  if (server.port === undefined) throw new Error("test server has no port")
 
   try {
-    const connecting = resolvingSession.connect({ profileDir: resolvingProfile, timeoutMs: 1000 })
+    const connecting = resolvingSession.connect({ profileDir: resolvingProfile, timeoutMs: 5000 })
     await Bun.sleep(20)
     resolvingSession.invalidate(new Error("CDP session was reset"))
-    await fs.writeFile(
-      path.join(resolvingProfile, "DevToolsActivePort"),
-      `${server.port}\n/devtools/browser/test\n`,
-    )
 
-    await expect(connecting).rejects.toThrow("CDP session was reset")
-    await Bun.sleep(50)
-    expect(openedSockets).toBe(0)
+    await expect(
+      Promise.race([
+        connecting,
+        Bun.sleep(200).then(() => {
+          throw new Error("profile resolution did not stop promptly")
+        }),
+      ]),
+    ).rejects.toThrow("CDP session was reset")
   } finally {
     await SessionStore.evict(resolvingSessionID)
-    server.stop(true)
     await fs.rm(resolvingProfile, { recursive: true, force: true })
   }
 })

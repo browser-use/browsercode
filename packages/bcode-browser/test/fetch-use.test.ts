@@ -11,7 +11,10 @@ import { Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { FetchUse } from "../src/fetch-use"
 
-const haveCredential = !!process.env.BROWSER_USE_API_KEY || !!process.env.BROWSER_USE_FETCH_TOKEN
+const haveProxySetting = !!process.env.BROWSER_USE_FETCH_URL || !!process.env.BROWSER_USE_FETCH_TOKEN
+const haveCredential =
+  (!!process.env.BROWSER_USE_FETCH_URL && !!process.env.BROWSER_USE_FETCH_TOKEN) ||
+  (!haveProxySetting && !!process.env.BROWSER_USE_API_KEY)
 
 test("layer constructs and exposes `enabled` reflecting env", async () => {
   const enabled = await Effect.gen(function* () {

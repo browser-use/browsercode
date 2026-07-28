@@ -361,6 +361,68 @@ test("a timed-out snippet returns progress and a queued call uses a fresh sessio
   }
 })
 
+test("a queued call's timeout includes time spent waiting for the same session", async () => {
+  const sessionID = "queue-timeout-" + Math.random().toString(36).slice(2, 8)
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-queue-timeout-ws-"))
+  const data = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-queue-timeout-data-"))
+  const session = SessionStore.get(sessionID)
+
+  try {
+    const impl = await Effect.runPromise(BrowserExecute.make(data))
+    let started!: () => void
+    const firstOutput = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const first = Effect.runPromise(
+      impl.execute(
+        {
+          description: "Hold session lock",
+          code: `console.log("started");
+                 await new Promise((resolve) => setTimeout(resolve, 50));
+                 return "first";`,
+          timeout: 1000,
+        },
+        {
+          sessionID,
+          workspaceDir: workspace,
+          onChunk: () => Effect.sync(started),
+        },
+      ),
+    )
+    await firstOutput
+
+    await expect(
+      Effect.runPromise(
+        impl.execute(
+          {
+            description: "Time out while queued",
+            code: `throw new Error("queued code should not run");`,
+            timeout: 10,
+          },
+          { sessionID, workspaceDir: workspace },
+        ),
+      ),
+    ).rejects.toThrow("browser_execute timed out after 10 ms waiting for a previous call; no code was run")
+
+    expect(JSON.parse((await first).result)).toBe("first")
+    expect(SessionStore.get(sessionID)).toBe(session)
+    const next = await Effect.runPromise(
+      impl.execute(
+        {
+          description: "Run after queue timeout",
+          code: `return "next";`,
+          timeout: 1000,
+        },
+        { sessionID, workspaceDir: workspace },
+      ),
+    )
+    expect(JSON.parse(next.result)).toBe("next")
+  } finally {
+    await SessionStore.evict(sessionID)
+    await Promise.all([workspace, data].map((d) => fs.rm(d, { recursive: true, force: true })))
+  }
+})
+
 test("timeout output is byte-capped and capture stops after timeout", async () => {
   const outputSessionID = "timeout-output-" + Math.random().toString(36).slice(2, 8)
   const outputWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-timeout-output-ws-"))

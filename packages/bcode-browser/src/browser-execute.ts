@@ -54,22 +54,43 @@ const TIMEOUT_OUTPUT_TRUNCATED = "[partial console output truncated; showing fin
 
 const executionLocks = new Map<string, { semaphore: Semaphore.Semaphore; users: number }>()
 
-const serialized = <A, E, R>(sessionID: string, effect: () => Effect.Effect<A, E, R>) =>
+const serialized = <A, E extends Error, R>(
+  sessionID: string,
+  timeout: number,
+  effect: (remaining: number) => Effect.Effect<A, E, R>,
+) =>
   Effect.suspend(() => {
     const existing = executionLocks.get(sessionID)
     const entry = existing ?? { semaphore: Semaphore.makeUnsafe(1), users: 0 }
     if (!existing) executionLocks.set(sessionID, entry)
     entry.users++
-    return entry.semaphore
-      .withPermits(1)(Effect.suspend(effect))
-      .pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            entry.users--
-            if (entry.users === 0 && executionLocks.get(sessionID) === entry) executionLocks.delete(sessionID)
+    const startedAt = Date.now()
+    const waitTimeout = () =>
+      Effect.fail(new Error(`browser_execute timed out after ${timeout} ms waiting for a previous call; no code was run`))
+    return Effect.uninterruptibleMask((restore) =>
+      restore(
+        entry.semaphore.take(1).pipe(
+          Effect.timeoutOrElse({
+            duration: timeout,
+            orElse: waitTimeout,
           }),
         ),
+      ).pipe(
+        Effect.flatMap(() => {
+          const remaining = timeout - (Date.now() - startedAt)
+          return restore(remaining <= 0 ? waitTimeout() : Effect.suspend(() => effect(remaining))).pipe(
+            Effect.ensuring(entry.semaphore.release(1)),
+          )
+        }),
+      ),
+    ).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          entry.users--
+          if (entry.users === 0 && executionLocks.get(sessionID) === entry) executionLocks.delete(sessionID)
+        }),
       )
+    )
   })
 
 const timeoutOutput = (output: string) => {
@@ -190,7 +211,7 @@ const serialize = (v: unknown): string => {
 export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string) {
   const skillsDir = yield* Effect.promise(() => Skills.resolveSkillsDir(dataDir))
 
-  const executeLocked = (args: Parameters, ctx: ExecuteContext) => {
+  const executeLocked = (args: Parameters, ctx: ExecuteContext, timeout: number, configuredTimeout: number) => {
     const session = SessionStore.get(ctx.sessionID)
     const captured = { active: true, output: "" }
     return Effect.gen(function* () {
@@ -258,15 +279,14 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
     }).pipe(
       Effect.scoped,
       Effect.timeoutOrElse({
-        duration: Math.min(args.timeout ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS),
+        duration: timeout,
         orElse: () =>
           Effect.gen(function* () {
-            const timeout = Math.min(args.timeout ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS)
             captured.active = false
             const output = timeoutOutput(captured.output)
             const error = new Error(
               [
-                `browser_execute timed out after ${timeout} ms; CDP session was reset`,
+                `browser_execute timed out after ${configuredTimeout} ms; CDP session was reset`,
                 output.trim() ? `Partial console output before timeout:\n${output.trimEnd()}` : "",
               ]
                 .filter(Boolean)
@@ -279,7 +299,10 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
     )
   }
 
-  const execute = (args: Parameters, ctx: ExecuteContext) => serialized(ctx.sessionID, () => executeLocked(args, ctx))
+  const execute = (args: Parameters, ctx: ExecuteContext) => {
+    const timeout = Math.max(1, Math.min(args.timeout ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS))
+    return serialized(ctx.sessionID, timeout, (remaining) => executeLocked(args, ctx, remaining, timeout))
+  }
 
   return { parameters, execute, skillsDir }
 })

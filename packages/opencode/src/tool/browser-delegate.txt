@@ -11,10 +11,31 @@ navigating to a known record, or revealing a known result. Do not delegate
 broad research, exhaustive scraping, final-answer composition, filesystem
 work, or ambiguous interpretation.
 
-For a qualifying transition, delegate before trying to implement the same
-interaction with browser_execute. Do not save this tool as a last-ditch retry
-after many manual attempts. If the leaf gives up, take over with
-browser_execute; do not repeatedly delegate the same transition.
+MUST-DELEGATE RULE: once the starting page and intended control are known, if
+your next browser action would click, type into, or select a known UI control
+and the result has an observable stopping state, call browser_delegate now.
+Do this BEFORE browser_execute performs that mutation. browser_execute may
+inspect the page, select the correct tab, or navigate to the starting page, but
+must not perform a qualifying interaction itself. This rule still applies
+after you already spent time discovering the control.
+
+If the user explicitly asks to fill a form, apply a named filter, choose named
+options, or open a named record and identifies the website, the requested
+transition is already known from the task. Call browser_delegate as the first
+browser tool and include the starting URL in its task; the leaf can navigate
+there. Do not first load browser-execute, search for the control,
+reverse-engineer its URL, or replace the requested UI operation with scraping.
+A task may contain a delegated transition followed by parent-owned extraction:
+perform the transition first, verify it, then do the extraction yourself.
+
+Example: after locating a "Low-Carb" filter, delegate applying that filter and
+waiting for filtered results. Then use browser_execute to verify the filter and
+extract the recipe titles. Do not click the filter or open its filtered URL
+yourself.
+
+Do not save this tool as a last-ditch retry after many manual attempts. If the
+leaf gives up, take over with browser_execute; do not repeatedly delegate the
+same transition.
 
 The leaf agent knows it is a subagent and may give up. Its completion status is
 only a claim. After this tool returns, ALWAYS use browser_execute to inspect the

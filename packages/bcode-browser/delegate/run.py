@@ -164,6 +164,11 @@ DONE_WHEN
         }
         with events_path.open("a", encoding="utf-8") as output:
             output.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
+        if (
+            len(agent.history) >= request.limits.max_steps
+            and not agent.history.is_done()
+        ):
+            agent.stop()
 
     span_options: dict[str, Any] = {
         "session_id": request.parent_session_id,

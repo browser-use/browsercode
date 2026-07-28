@@ -14,6 +14,23 @@ const MAX_ACTIONS_PER_STEP = 3
 const PROCESS_TIMEOUT_MS = 120_000
 const SHUTDOWN_GRACE_MS = 5_000
 
+export const enabled = () =>
+  Boolean(
+    (process.env.BROWSER_USE_DELEGATE_API_KEY ?? process.env.BROWSER_USE_API_KEY) &&
+      (process.env.BU_CDP_WS ?? process.env.BU_CDP_URL),
+  )
+
+export const routingPolicy = [
+  "<browser_delegation>",
+  "Browser Use is the leaf executor for short, obvious UI transitions; BrowserCode remains the planner and verifier.",
+  "When the user request itself names a bounded interaction and its website, call browser_delegate as the first browser tool. Include the starting URL in its narrow task; the leaf can navigate there.",
+  "Do not load the browser-execute skill, inspect the page, rediscover the named control, reverse-engineer its destination URL, or perform the interaction with raw CDP first.",
+  "When research is genuinely needed before the transition becomes known, do that research in BrowserCode, then call browser_delegate immediately once the starting page, operation, and observable done_when are clear.",
+  "After the leaf returns, inspect the page with browser_execute and independently verify its claim. If it gives up, take over and do not delegate the same transition again.",
+  "Keep broad research, scraping, interpretation, and final-answer composition in BrowserCode.",
+  "</browser_delegation>",
+].join("\n")
+
 export const parameters = Schema.Struct({
   task: Schema.String.annotate({
     description:

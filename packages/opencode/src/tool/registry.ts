@@ -36,6 +36,7 @@ import path from "path"
 import { pathToFileURL } from "url"
 import { Effect, Layer, Context } from "effect"
 import { FetchUse } from "@browser-use/bcode-browser/fetch-use"
+import { BrowserDelegate } from "@browser-use/bcode-browser/browser-delegate"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Format } from "../format"
@@ -113,7 +114,7 @@ const layer = Layer.effect(
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
     const browserExecute = yield* BrowserExecuteTool
-    const browserDelegate = yield* BrowserDelegateTool
+    const browserDelegate = BrowserDelegate.enabled() ? yield* BrowserDelegateTool : undefined
     const agent = yield* Agent.Service
     const codeMode = flags.experimentalCodeMode ? yield* Effect.promise(() => import("./code-mode")) : undefined
     const codeModeTool = codeMode ? yield* codeMode.CodeModeTool : undefined
@@ -220,7 +221,7 @@ const layer = Layer.effect(
           search: Tool.init(websearch),
           skill: Tool.init(skilltool),
           browserExecute: Tool.init(browserExecute),
-          browserDelegate: Tool.init(browserDelegate),
+          ...(browserDelegate ? { browserDelegate: Tool.init(browserDelegate) } : {}),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
@@ -245,7 +246,7 @@ const layer = Layer.effect(
             tool.search,
             tool.skill,
             tool.browserExecute,
-            tool.browserDelegate,
+            ...(tool.browserDelegate ? [tool.browserDelegate] : []),
             tool.patch,
             ...(tool.execute ? [tool.execute] : []),
             ...(flags.experimentalLspTool ? [tool.lsp] : []),

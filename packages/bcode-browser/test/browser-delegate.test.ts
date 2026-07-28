@@ -95,3 +95,21 @@ test("persists a compact delegation receipt and top-level index", async () => {
     }),
   ])
 })
+
+test("enables delegation only when the shared browser and leaf model are configured", () => {
+  const previousDelegateKey = process.env.BROWSER_USE_DELEGATE_API_KEY
+  const previousApiKey = process.env.BROWSER_USE_API_KEY
+  try {
+    delete process.env.BROWSER_USE_DELEGATE_API_KEY
+    delete process.env.BROWSER_USE_API_KEY
+    expect(BrowserDelegate.enabled()).toBe(false)
+    process.env.BROWSER_USE_DELEGATE_API_KEY = "test-key"
+    expect(BrowserDelegate.enabled()).toBe(true)
+    expect(BrowserDelegate.routingPolicy).toContain("call browser_delegate as the first browser tool")
+  } finally {
+    if (previousDelegateKey === undefined) delete process.env.BROWSER_USE_DELEGATE_API_KEY
+    else process.env.BROWSER_USE_DELEGATE_API_KEY = previousDelegateKey
+    if (previousApiKey === undefined) delete process.env.BROWSER_USE_API_KEY
+    else process.env.BROWSER_USE_API_KEY = previousApiKey
+  }
+})

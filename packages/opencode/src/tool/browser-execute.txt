@@ -4,4 +4,5 @@ Usage:
 - Use this tool whenever the task requires driving a real browser.
 - Use this tool to read webpages that block the webfetch tool.
 - IMPORTANT: you MUST use the skill tool first to load the `browser-execute` skill. This tool will fail if you did not read those directions first.
+- If the task names a bounded UI transition and its website, browser_delegate must be the first browser tool. Do not use browser_execute to connect, navigate, inspect, or perform that transition first.
 - Returns console output from the snippet; screenshots taken attach automatically as images.

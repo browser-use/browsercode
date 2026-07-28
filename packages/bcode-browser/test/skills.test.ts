@@ -17,6 +17,7 @@ test("resolveSkillsDir materializes skills with {{SKILLS_DIR}} substituted", asy
     const browser = (await fs.readFile(path.join(dir, "browser-execute", "SKILL.md"), "utf8")).replaceAll("\\", "/")
     expect(browser).not.toContain("{{SKILLS_DIR}}")
     expect(browser).toContain(`${dir.replaceAll("\\", "/")}/`)
+    expect(browser).toContain("`browser_delegate` should have been the first browser tool")
   } finally {
     await fs.rm(dataDir, { recursive: true, force: true })
   }

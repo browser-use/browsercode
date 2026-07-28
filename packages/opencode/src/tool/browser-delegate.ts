@@ -13,7 +13,6 @@ export const BrowserDelegateTool = Tool.define(
   "browser_delegate",
   Effect.gen(function* () {
     const apiKey = process.env.BROWSER_USE_DELEGATE_API_KEY ?? process.env.BROWSER_USE_API_KEY ?? ""
-    delete process.env.BROWSER_USE_DELEGATE_API_KEY
     return {
       description: DESCRIPTION,
       parameters: BrowserDelegate.parameters,

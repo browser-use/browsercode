@@ -11,7 +11,8 @@ import { Effect, Schema } from "effect"
 
 const MAX_STEPS = 15
 const MAX_ACTIONS_PER_STEP = 3
-const PROCESS_TIMEOUT_MS = 300_000
+const AGENT_TIMEOUT_SECONDS = 120
+const PROCESS_TIMEOUT_MS = 180_000
 const SHUTDOWN_GRACE_MS = 5_000
 const MAX_DELEGATIONS_PER_TASK = 4
 const MAX_DELEGATE_STEPS_PER_TASK = 45
@@ -94,6 +95,7 @@ export interface ExecuteContext {
   readonly originalTask: string
   readonly parentSpanContext?: string
   readonly model?: string
+  readonly processTimeoutMs?: number
 }
 
 export const execute = (args: Parameters, ctx: ExecuteContext) =>
@@ -104,6 +106,7 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
       if (!cdpUrl) throw new Error("browser_delegate requires BU_CDP_WS or BU_CDP_URL")
 
       const delegationID = ctx.delegationID.replaceAll(/[^a-zA-Z0-9._-]/g, "_")
+      const processTimeoutMs = ctx.processTimeoutMs ?? PROCESS_TIMEOUT_MS
       const maxSteps = await availableDelegationSteps(ctx.indexPath)
       const directory = path.join(ctx.artifactRoot, delegationID)
       const requestPath = path.join(directory, "request.json")
@@ -129,7 +132,7 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
             limits: {
               max_steps: maxSteps,
               max_actions_per_step: MAX_ACTIONS_PER_STEP,
-              timeout_seconds: PROCESS_TIMEOUT_MS / 1000,
+              timeout_seconds: AGENT_TIMEOUT_SECONDS,
             },
           },
           null,
@@ -168,7 +171,7 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
       const output = Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()])
       const outcome = await Promise.race([
         child.exited.then((code) => ({ code, timedOut: false })),
-        Bun.sleep(PROCESS_TIMEOUT_MS).then(() => ({ code: -1, timedOut: true })),
+        Bun.sleep(processTimeoutMs).then(() => ({ code: -1, timedOut: true })),
       ])
 
       if (outcome.timedOut) {
@@ -185,6 +188,7 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
       await Promise.all([Bun.write(stdoutPath, stdout), Bun.write(stderrPath, stderr)])
 
       if (outcome.timedOut && !(await Bun.file(resultPath).exists())) {
+        const partial = await recoverTimedOutDelegation(directory)
         await Bun.write(
           resultPath,
           JSON.stringify(
@@ -193,28 +197,36 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
               delegation_id: delegationID,
               status: "timed_out",
               done_when: args.done_when,
-              summary: "Browser Use reached the 300 second delegation deadline.",
+              summary: [
+                `Browser Use did not flush a receipt before the ${processTimeoutMs / 1000} second process deadline.`,
+                partial.steps > 0
+                  ? `Partial checkpoints recorded ${partial.steps} steps and ${partial.actions} actions.`
+                  : "",
+                partial.finalUrl ? `Last checkpoint URL: ${partial.finalUrl}` : "",
+              ]
+                .filter(Boolean)
+                .join(" "),
               result_artifact: null,
               result_length_chars: 0,
               result_truncated: false,
-              action_digest: [],
+              action_digest: partial.actionDigest,
               action_details: [],
               extracted_content: [],
               done_condition_claimed: false,
-              initial_url: "",
-              initial_title: "",
-              final_url: "",
+              initial_url: partial.initialUrl,
+              initial_title: partial.initialTitle,
+              final_url: partial.finalUrl,
               observed_state_after: null,
               blocker: "delegation deadline reached",
-              uncertainties: [],
+              uncertainties: partial.errors,
               metrics: {
-                duration_seconds: PROCESS_TIMEOUT_MS / 1000,
-                steps: 0,
-                actions: 0,
+                duration_seconds: processTimeoutMs / 1000,
+                steps: partial.steps,
+                actions: partial.actions,
                 cost_usd: 0,
                 total_tokens: 0,
               },
-              artifacts: ["request.json", "stdout.log", "stderr.log"],
+              artifacts: partial.artifacts,
               trace_id: traceID(ctx.parentSpanContext),
             },
             null,
@@ -249,6 +261,72 @@ const appendIndex = async (indexPath: string, entry: Record<string, unknown>) =>
   const current = (await file.exists()) ? await file.json() : []
   if (!Array.isArray(current)) throw new Error(`${indexPath} must contain a JSON array`)
   await Bun.write(indexPath, JSON.stringify([...current, entry], null, 2) + "\n")
+}
+
+const recoverTimedOutDelegation = async (directory: string) => {
+  const initialState = await Bun.file(path.join(directory, "initial_state.json"))
+    .json()
+    .catch(() => ({}))
+  const events = await Bun.file(path.join(directory, "actions.jsonl"))
+    .text()
+    .then((value) =>
+      value
+        .split("\n")
+        .filter(Boolean)
+        .flatMap((line) => {
+          try {
+            const event: unknown = JSON.parse(line)
+            return isRecord(event) ? [event] : []
+          } catch {
+            return []
+          }
+        }),
+    )
+    .catch(() => [])
+  const lastEvent = events.at(-1)
+  const actionDigest = events
+    .flatMap((event) => {
+      const actions = event.actions
+      if (!Array.isArray(actions)) return []
+      const names = actions.flatMap((action) =>
+        typeof action === "object" && action !== null ? Object.keys(action).slice(0, 1) : [],
+      )
+      return names.length > 0 ? [names.join(", ")] : []
+    })
+    .slice(-8)
+  const errors = events
+    .flatMap((event) => (Array.isArray(event.errors) ? event.errors : []))
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .slice(-3)
+  const artifacts = (await fs.readdir(directory, { withFileTypes: true }))
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .sort()
+  return {
+    steps: events.reduce(
+      (maximum, event) => (typeof event.step === "number" ? Math.max(maximum, event.step) : maximum),
+      0,
+    ),
+    actions: events.reduce((total, event) => total + (Array.isArray(event.actions) ? event.actions.length : 0), 0),
+    actionDigest,
+    errors,
+    initialUrl:
+      typeof initialState === "object" &&
+      initialState !== null &&
+      "url" in initialState &&
+      typeof initialState.url === "string"
+        ? initialState.url
+        : "",
+    initialTitle:
+      typeof initialState === "object" &&
+      initialState !== null &&
+      "title" in initialState &&
+      typeof initialState.title === "string"
+        ? initialState.title
+        : "",
+    finalUrl: lastEvent && typeof lastEvent.url === "string" ? lastEvent.url : "",
+    artifacts,
+  }
 }
 
 const availableDelegationSteps = async (indexPath: string) => {
@@ -287,5 +365,8 @@ const traceID = (context: string | undefined): string | null => {
     return null
   }
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
 
 export * as BrowserDelegate from "./browser-delegate"

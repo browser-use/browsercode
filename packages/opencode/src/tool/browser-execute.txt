@@ -4,7 +4,8 @@ Usage:
 - Use this tool whenever the task requires driving a real browser.
 - Use this tool to read webpages that block the webfetch tool.
 - IMPORTANT: you MUST use the skill tool first to load the `browser-execute` skill. This tool will fail if you did not read those directions first.
-- Prefer `browser_delegate` for meaningful portions of routine browser interaction and visible data collection. You may delegate before or after using this tool, and may delegate multiple times as the task evolves.
+- Default to `browser_delegate` for a coherent browser episode when its receipt replaces substantial work; keep unresolved research, judgment, scripts/APIs/PDFs/files, aggregation, and final synthesis here.
 - Return only the fields needed for the current decision. Large output is saved automatically; inspect that file with focused Grep/Read calls instead of loading it whole.
+- For all-results or large extractions, write the canonical output artifact incrementally. Auto-saved tool output and model context are evidence, not the final deliverable.
 - After three browser calls that add no new evidence toward the requested result, stop probing the same strategy: change approach, report the blocker, or finish.
 - Returns console output from the snippet; screenshots taken attach automatically as images.

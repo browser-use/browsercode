@@ -1,22 +1,20 @@
-Runs a fast, inexpensive, but substantially less capable Browser Use subagent
-on the current CDP tab. It sees a compact page state—URL, visible text, numbered
-interactive elements, and a screenshot when needed—and chooses low-level
-click/type/scroll/read actions.
+Runs a fast, inexpensive Browser Use operator on the current CDP tab. It sees a
+compact page state—URL, visible text, numbered interactive elements, and a
+screenshot when needed—and chooses low-level click/type/scroll/read actions.
 
-Prefer delegation for browser interaction and visible data collection whenever
-you can give the subagent a useful objective, strategy, and constraints. You may
-delegate meaningful portions of work multiple times and at any point in a task;
-the delegated portion does not need to be the whole browser task.
+Default to delegation for a coherent browser episode when its receipt can
+replace substantial browser work you would otherwise do yourself: multi-step
+navigation, forms, filters, pagination, or bounded visible data collection. You
+may delegate multiple times as the task evolves.
 
-You remain responsible for planning, source and record selection, ambiguity,
-interpretation, and final correctness. Use your own tools for scripting,
-CDP/API/debugging work, files, authentication recovery, and other work requiring
-capabilities or judgment the subagent lacks. Once you resolve that difficulty,
-you may delegate subsequent browser work again.
+Decide the strategy first. Keep unresolved research, source or record judgment,
+CDP/JavaScript/API/PDF/file work, authentication recovery, aggregation, and
+final synthesis with you. Never delegate work you expect to redo. After a
+give-up, resolve or materially change the blocked state before delegating a
+different, narrower browser episode; do not weaken the user's requirements.
 
 The current user request is included automatically as read-only context, so
 `task` should describe only the delegated work. Make `done_when` name the exact
-observable outcome and values to return; provide an algorithm when the weaker
-subagent should follow one. It may give up, and a give-up ends only that
-delegated portion. A `completed` status is the child's claim, not proof: inspect
-the returned values, final state, and attached screenshot before relying on it.
+observable outcome and values to return. It may give up, and a give-up ends only
+that delegated portion. A `claimed_complete` status is not proof: inspect the
+returned values, final state, and attached screenshot before relying on it.

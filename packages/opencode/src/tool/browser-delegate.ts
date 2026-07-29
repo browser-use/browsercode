@@ -85,12 +85,13 @@ export const BrowserDelegateTool = Tool.define(
                   },
                 ]
               : []
+          const parentFacingStatus = result.status === "completed" ? "claimed_complete" : result.status
           return {
-            title: `browser_delegate: ${result.status}`,
+            title: `browser_delegate: ${parentFacingStatus}`,
             output: [
               JSON.stringify(
                 {
-                  status: result.status,
+                  status: parentFacingStatus,
                   completion_contract: {
                     done_when: result.done_when,
                     child_claimed_success: result.done_condition_claimed,

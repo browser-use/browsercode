@@ -112,7 +112,8 @@ done(success=False) immediately. Explain the current state and what the parent
 must resolve. Also give up if any DONE_WHEN requirement is missing,
 contradicted, or cannot be directly observed. Never broaden the task,
 substitute another source or record, infer a missing value, or continue the
-overall request. When unsure, do less. Giving up is correct.
+overall request. Never retry the same blocked interaction more than once. When
+unsure, do less. Giving up is correct.
 """.strip()
 
 EXCLUDED_ACTIONS = ["read_file", "write_file", "replace_file", "upload_file"]
@@ -448,6 +449,7 @@ DONE_WHEN
     if parent is not None:
         span_options["parent_span_context"] = parent
 
+    timed_out = False
     span_options["span_type"] = "LLM"
     with Laminar.start_as_current_span("browser_use.subagent", **span_options):
         agent = Agent(
@@ -468,9 +470,16 @@ DONE_WHEN
             step_timeout=60,
             extend_system_message=SUBAGENT_PROMPT,
         )
-        history = await agent.run(
-            max_steps=request.limits.max_steps, on_step_end=checkpoint
-        )
+        try:
+            async with asyncio.timeout(request.limits.timeout_seconds):
+                history = await agent.run(
+                    max_steps=request.limits.max_steps, on_step_end=checkpoint
+                )
+        except TimeoutError:
+            timed_out = True
+            agent.stop()
+            history = agent.history
+            history.usage = await agent.token_cost_service.get_usage_summary()
         history.save_to_file(history_path)
         usage = getattr(history, "usage", None)
         usage_data = usage.model_dump(mode="json") if usage is not None else {}
@@ -496,8 +505,8 @@ DONE_WHEN
 
     observed_state = await observe_browser_state(browser, directory, request.target_id)
     success = history.is_successful()
-    status: Literal["completed", "gave_up"] = (
-        "completed" if success is True else "gave_up"
+    status: Literal["completed", "gave_up", "timed_out"] = (
+        "timed_out" if timed_out else "completed" if success is True else "gave_up"
     )
     final_result = (history.final_result() or "").strip() if history.is_done() else ""
     result_artifact = "final_result.txt" if final_result else None
@@ -505,6 +514,15 @@ DONE_WHEN
         (directory / result_artifact).write_text(final_result + "\n")
     if final_result:
         summary, result_truncated = compact_result(final_result)
+    elif timed_out:
+        summary, _ = compact_result(
+            "Browser Use reached the "
+            f"{request.limits.timeout_seconds} second delegation deadline before "
+            f"satisfying DONE_WHEN: {request.done_when}\n"
+            f"Final observed page: {observed_state.title or '(untitled)'} "
+            f"({observed_state.url or 'unknown URL'})."
+        )
+        result_truncated = False
     else:
         summary, _ = compact_result(
             (
@@ -519,7 +537,7 @@ DONE_WHEN
         result_truncated = False
     errors = [str(error) for error in history.errors() if error]
     blocker = None
-    if success is not True:
+    if success is not True or timed_out:
         blocker = (
             compact_result(final_result, 2000)[0]
             if final_result

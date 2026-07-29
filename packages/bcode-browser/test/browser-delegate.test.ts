@@ -7,12 +7,14 @@ import { BrowserDelegate } from "../src/browser-delegate"
 
 let directory: string
 let runner: string
+let slowRunner: string
 const previousRunner = process.env.BROWSER_USE_DELEGATE_RUNNER
 const previousCdp = process.env.BU_CDP_WS
 
 beforeAll(async () => {
   directory = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-delegate-"))
   runner = path.join(directory, "fake_runner.py")
+  slowRunner = path.join(directory, "slow_runner.py")
   await fs.writeFile(
     runner,
     `
@@ -67,6 +69,31 @@ Path(args.result).write_text(json.dumps({
 }) + "\\n")
 `,
   )
+  await fs.writeFile(
+    slowRunner,
+    `
+import argparse
+import json
+import time
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--request", required=True)
+parser.add_argument("--result", required=True)
+args = parser.parse_args()
+request = json.loads(Path(args.request).read_text())
+directory = Path(args.result).parent
+(directory / "initial_state.json").write_text(json.dumps({
+    "url": "https://example.com/start",
+    "title": "Start",
+}) + "\\n")
+(directory / "actions.jsonl").write_text(
+    json.dumps({"step": 1, "url": "https://example.com/one", "actions": [{"click": {}}], "errors": []}) + "\\n" +
+    json.dumps({"step": 2, "url": "https://example.com/two", "actions": [{"input_text": {}}, {"click": {}}], "errors": ["page stalled"]}) + "\\n"
+)
+time.sleep(60)
+`,
+  )
   process.env.BROWSER_USE_DELEGATE_RUNNER = runner
   process.env.BU_CDP_WS = "ws://127.0.0.1:9222/devtools/browser/test"
 })
@@ -111,7 +138,7 @@ test("persists a compact delegation receipt and top-level index", async () => {
     parent_session_id: "session_test",
     target_id: "target_test",
     original_task: "Find the displayed shipping price for this route.",
-    limits: { max_steps: 15, max_actions_per_step: 3, timeout_seconds: 300 },
+    limits: { max_steps: 15, max_actions_per_step: 3, timeout_seconds: 120 },
   })
   expect(JSON.parse(await fs.readFile(path.join(directory, "delegations.json"), "utf8"))).toEqual([
     expect.objectContaining({
@@ -135,6 +162,40 @@ test("enables delegation only when the shared browser and leaf model are configu
     else process.env.BROWSER_USE_DELEGATE_API_KEY = previousDelegateKey
     if (previousApiKey === undefined) delete process.env.BROWSER_USE_API_KEY
     else process.env.BROWSER_USE_API_KEY = previousApiKey
+  }
+})
+
+test("recovers checkpoint evidence when the child misses its process deadline", async () => {
+  process.env.BROWSER_USE_DELEGATE_RUNNER = slowRunner
+  try {
+    const result = await Effect.runPromise(
+      BrowserDelegate.execute(
+        {
+          task: "Complete a browser workflow.",
+          done_when: "The result page is visible.",
+        },
+        {
+          delegationID: "call_timeout",
+          parentSessionID: "session_test",
+          targetID: "target_test",
+          artifactRoot: path.join(directory, "timeout-delegations"),
+          indexPath: path.join(directory, "timeout-index.json"),
+          apiKey: "test-key",
+          originalTask: "Complete the workflow.",
+          processTimeoutMs: 50,
+        },
+      ),
+    )
+
+    expect(result.status).toBe("timed_out")
+    expect(result.metrics).toMatchObject({ duration_seconds: 0.05, steps: 2, actions: 3 })
+    expect(result.initial_url).toBe("https://example.com/start")
+    expect(result.final_url).toBe("https://example.com/two")
+    expect(result.action_digest).toEqual(["click", "input_text, click"])
+    expect(result.uncertainties).toEqual(["page stalled"])
+    expect(result.artifacts).toContain("actions.jsonl")
+  } finally {
+    process.env.BROWSER_USE_DELEGATE_RUNNER = runner
   }
 })
 

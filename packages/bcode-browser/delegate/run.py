@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class DelegationLimits(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    max_steps: int = Field(ge=1, le=25)
+    max_steps: int = Field(ge=1, le=15)
     max_actions_per_step: int = Field(ge=1, le=3)
     timeout_seconds: int = Field(ge=1, le=300)
 
@@ -34,6 +34,7 @@ class DelegationRequest(BaseModel):
     delegation_id: str = Field(min_length=1)
     parent_session_id: str = Field(min_length=1)
     target_id: str | None = None
+    original_task: str
     task: str = Field(min_length=1)
     done_when: str = Field(min_length=1)
     limits: DelegationLimits
@@ -90,16 +91,19 @@ class DelegationResult(BaseModel):
 
 
 SUBAGENT_PROMPT = """
-You are a bounded browser executor for a parent agent. Complete only TASK and
-stop when DONE_WHEN is visibly satisfied. Directly observe every value you
-return; never guess or broaden the task.
+You are a bounded browser executor for a parent agent. ORIGINAL_REQUEST is
+read-only context; complete only TASK. Preserve every applicable constraint
+from ORIGINAL_REQUEST and stop when DONE_WHEN is visibly satisfied. Directly
+observe every value you return; never guess or broaden the task.
 
 Your done text is the parent's receipt. Include the exact requested values,
-records, and links, plus any uncertainty. Never return only "done".
+records, and links, plus observed evidence for every DONE_WHEN requirement.
+Never return only "done".
 
 If blocked, ambiguous, missing information, or unlikely to finish within the
-budget, call done(success=False). Giving up is correct. Do not use files,
-JavaScript, APIs, or debugging tools.
+budget, or if any DONE_WHEN requirement is missing or contradicted, call
+done(success=False). Giving up is correct. Do not use files, JavaScript, APIs,
+or debugging tools.
 """.strip()
 
 EXCLUDED_ACTIONS = ["read_file", "write_file", "replace_file", "upload_file"]
@@ -362,6 +366,9 @@ async def execute(request: DelegationRequest, directory: Path) -> DelegationResu
     )
     tools = Tools(exclude_actions=EXCLUDED_ACTIONS)
     task = f"""
+ORIGINAL_REQUEST
+{request.original_task}
+
 TASK
 {request.task}
 
@@ -396,6 +403,7 @@ DONE_WHEN
         "input": {
             "delegation_id": request.delegation_id,
             "target_id": request.target_id,
+            "original_task": request.original_task,
             "task": request.task,
             "done_when": request.done_when,
             "limits": request.limits.model_dump(mode="json"),

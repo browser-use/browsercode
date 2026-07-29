@@ -3,11 +3,13 @@ compact page state—URL, visible text, numbered interactive elements, and a
 screenshot when needed—and emits up to three click/type/scroll/read actions.
 
 Delegate one complete episode when its start is known, its result is visible,
-and it should finish within 25 steps: for example a form, filters plus bounded
+and it should finish within 15 steps: for example a form, filters plus bounded
 results, or a known finite list. Keep open research, completeness or source
 judgment, debugging/CDP/API work, files, and authentication recovery here.
 
-Put every known input in `task`. Make `done_when` name the exact visible state
-and values to return; the subagent must observe rather than infer them. It may
-give up. On success, use its returned actions, values, final state, and attached
-screenshot directly. On failure, take over and do not delegate this tab again.
+The current user request is included automatically as read-only context, so
+`task` should only describe the delegated episode. Make `done_when` name the
+exact visible state and values to return; the subagent must observe rather than
+infer them. It may give up. On success, use its returned actions, values, final
+state, and attached screenshot directly. On failure, take over and do not
+delegate this tab again.

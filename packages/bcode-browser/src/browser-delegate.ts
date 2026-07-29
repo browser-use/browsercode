@@ -9,7 +9,7 @@ import fs from "fs/promises"
 import path from "path"
 import { Effect, Schema } from "effect"
 
-const MAX_STEPS = 25
+const MAX_STEPS = 15
 const MAX_ACTIONS_PER_STEP = 3
 const PROCESS_TIMEOUT_MS = 300_000
 const SHUTDOWN_GRACE_MS = 5_000
@@ -22,8 +22,7 @@ export const enabled = () =>
 
 export const parameters = Schema.Struct({
   task: Schema.String.annotate({
-    description:
-      "One complete, bounded browser episode. Include its start URL, all known values, and the exact data the leaf must return.",
+    description: "One complete, bounded browser episode. Include its start URL and episode-specific inputs.",
   }),
   done_when: Schema.String.annotate({
     description:
@@ -86,6 +85,7 @@ export interface ExecuteContext {
   readonly artifactRoot: string
   readonly indexPath: string
   readonly apiKey: string
+  readonly originalTask: string
   readonly parentSpanContext?: string
   readonly model?: string
 }
@@ -117,6 +117,7 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
             delegation_id: delegationID,
             parent_session_id: ctx.parentSessionID,
             target_id: ctx.targetID ?? null,
+            original_task: ctx.originalTask,
             task: args.task,
             done_when: args.done_when,
             limits: {

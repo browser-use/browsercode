@@ -33,6 +33,7 @@ export const BrowserDelegateTool = Tool.define(
             artifactRoot: process.env.BROWSER_DELEGATION_ROOT ?? defaultRoot,
             indexPath: process.env.BROWSER_DELEGATION_INDEX ?? path.join(defaultRoot, "delegations.json"),
             apiKey,
+            originalTask: currentUserRequest(ctx),
             parentSpanContext: serializeTurnSpanContext(ctx.sessionID),
             model: process.env.BROWSER_USE_DELEGATE_MODEL,
           })
@@ -97,3 +98,19 @@ export const BrowserDelegateTool = Tool.define(
     }
   }),
 )
+
+const currentUserRequest = (ctx: Tool.Context) => {
+  const assistant = ctx.messages.find((message) => message.info.id === ctx.messageID)
+  const user = (() => {
+    if (assistant && assistant.info.role === "assistant") {
+      const parentID = assistant.info.parentID
+      return ctx.messages.find((message) => message.info.id === parentID)
+    }
+    return ctx.messages.findLast((message) => message.info.role === "user")
+  })()
+  if (!user || user.info.role !== "user") return ""
+  return user.parts
+    .flatMap((part) => (part.type === "text" && !part.synthetic ? [part.text.trim()] : []))
+    .filter(Boolean)
+    .join("\n\n")
+}

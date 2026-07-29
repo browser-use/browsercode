@@ -4,7 +4,7 @@ import path from "path"
 import { Effect, Schema } from "effect"
 import { BrowserDelegate } from "@browser-use/bcode-browser/browser-delegate"
 import { SessionStore } from "@browser-use/bcode-browser/session-store"
-import { serializeTurnSpanContext } from "@browser-use/bcode-laminar/span"
+import { serializeSpawningToolSpanContext } from "@browser-use/bcode-laminar/span"
 import { InstanceState } from "@/effect/instance-state"
 import * as Tool from "./tool"
 import DESCRIPTION from "./browser-delegate.txt"
@@ -26,15 +26,16 @@ export const BrowserDelegateTool = Tool.define(
           })
           const instance = yield* InstanceState.context
           const defaultRoot = path.join(instance.directory, ".bcode", "delegations")
+          const delegationID = ctx.callID ?? crypto.randomUUID()
           const result = yield* BrowserDelegate.execute(args, {
-            delegationID: ctx.callID ?? crypto.randomUUID(),
+            delegationID,
             parentSessionID: ctx.sessionID,
             targetID: SessionStore.get(ctx.sessionID).getActiveTarget(),
             artifactRoot: process.env.BROWSER_DELEGATION_ROOT ?? defaultRoot,
             indexPath: process.env.BROWSER_DELEGATION_INDEX ?? path.join(defaultRoot, "delegations.json"),
             apiKey,
             originalTask: currentUserRequest(ctx),
-            parentSpanContext: serializeTurnSpanContext(ctx.sessionID),
+            parentSpanContext: serializeSpawningToolSpanContext(delegationID, ctx.sessionID),
             model: process.env.BROWSER_USE_DELEGATE_MODEL,
           })
           const finalTargetID = result.observed_state_after?.target_id
@@ -105,8 +106,8 @@ export const BrowserDelegateTool = Tool.define(
                     title: result.initial_title,
                   },
                   final_state: finalState,
-                  unresolved: [result.blocker, ...result.uncertainties].filter(
-                    (value): value is string => Boolean(value),
+                  unresolved: [result.blocker, ...result.uncertainties].filter((value): value is string =>
+                    Boolean(value),
                   ),
                   metrics: result.metrics,
                   artifact_directory: result.artifact_directory,

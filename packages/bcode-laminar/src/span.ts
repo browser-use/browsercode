@@ -7,21 +7,9 @@
 
 import { type Context, ROOT_CONTEXT, type Span, trace, TraceFlags } from "@opentelemetry/api"
 
-import { sessionCurrentTurnSpan } from "./state"
-import {
-  PARENT_SPAN_IDS_PATH,
-  PARENT_SPAN_PATH,
-  SESSION_ID,
-  SPAN_INPUT,
-  SPAN_TYPE,
-} from "./attributes"
-import {
-  isStringUUID,
-  otelSpanIdToUUID,
-  type StringUUID,
-  uuidToOtelSpanId,
-  uuidToOtelTraceId,
-} from "./utils"
+import { sessionCurrentTurnSpan, spawningToolSpanContexts } from "./state"
+import { PARENT_SPAN_IDS_PATH, PARENT_SPAN_PATH, SESSION_ID, SPAN_INPUT, SPAN_TYPE } from "./attributes"
+import { isStringUUID, otelSpanIdToUUID, type StringUUID, uuidToOtelSpanId, uuidToOtelTraceId } from "./utils"
 
 const TURN_TRACER_NAME = "@browser-use/bcode-laminar"
 
@@ -83,8 +71,7 @@ const parseLaminarSpanContext = (input: string): ParsedSpanContext | undefined =
       : undefined
     const spanIdsPathRaw = record.spanIdsPath ?? record.span_ids_path
     const spanIdsPath =
-      Array.isArray(spanIdsPathRaw) &&
-      spanIdsPathRaw.every((v: unknown) => typeof v === "string" && isStringUUID(v))
+      Array.isArray(spanIdsPathRaw) && spanIdsPathRaw.every((v: unknown) => typeof v === "string" && isStringUUID(v))
         ? (spanIdsPathRaw as StringUUID[])
         : undefined
     return {
@@ -115,3 +102,6 @@ export const serializeTurnSpanContext = (sessionId: string): string | undefined 
     spanIdsPath: [...(parent?.spanIdsPath ?? []), spanId],
   })
 }
+
+export const serializeSpawningToolSpanContext = (toolCallId: string, sessionId: string): string | undefined =>
+  spawningToolSpanContexts[toolCallId] ?? serializeTurnSpanContext(sessionId)

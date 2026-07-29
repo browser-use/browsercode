@@ -17,7 +17,7 @@
 //  - `pino` logger — opencode plugins log via `client.app.log`; the plugin passes
 //    in a logger callback.
 
-import { type Context, type Span, trace } from "@opentelemetry/api"
+import { type Context, trace } from "@opentelemetry/api"
 import {
   BatchSpanProcessor,
   type ReadableSpan,
@@ -34,7 +34,7 @@ import {
   SPAN_SDK_VERSION,
 } from "./attributes"
 import { getParentSpanId, makeSpanOtelV2Compatible, type OTelSpanCompat } from "./compat"
-import { sessionCurrentTurnSpan } from "./state"
+import { sessionCurrentTurnSpan, spawningToolSpanContexts } from "./state"
 import { otelSpanIdToUUID, type StringUUID } from "./utils"
 
 const SDK_VERSION = "bcode-laminar-0.1"
@@ -70,9 +70,7 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
     // 1. Re-parent AI-SDK spans onto the live "turn" span for this opencode
     //    session, so each turn becomes its own Laminar trace instead of a
     //    forest of orphan traces.
-    const sessionId = span.attributes?.["ai.telemetry.metadata.sessionId"] as
-      | string
-      | undefined
+    const sessionId = span.attributes?.["ai.telemetry.metadata.sessionId"] as string | undefined
     let ctx = parentContext
     if (sessionId && typeof sessionId === "string") {
       const parentSpanContext = sessionCurrentTurnSpan[sessionId]?.spanContext()
@@ -91,31 +89,27 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
     // 2. Track `task`-tool spans so any descendant sub-agent span can be
     //    tagged with its tool-use id (links sub-agent traces to parent).
     const toolCallId = span.attributes?.["ai.toolCall.id"] as string | undefined
+    let spawningToolCallId: string | undefined
     if (toolCallId) {
       const toolCallNameAttr = span.attributes?.["ai.toolCall.name"] as string | undefined
       if (
         SPAWNING_TOOL_NAMES.includes(span.name) ||
-        (span.name === "ai.toolCall" &&
-          toolCallNameAttr &&
-          SPAWNING_TOOL_NAMES.includes(toolCallNameAttr))
+        (span.name === "ai.toolCall" && toolCallNameAttr && SPAWNING_TOOL_NAMES.includes(toolCallNameAttr))
       ) {
         this.spawningSpanIdToToolUseId[otelSpanIdToUUID(span.spanContext().spanId)] = toolCallId
+        spawningToolCallId = toolCallId
       }
     }
 
     // 3. Stamp Laminar's path attributes. The UI nests by these, NOT by
     //    OTel parentSpanId — must run for every span.
     const parentPathFromAttribute = span.attributes?.[PARENT_SPAN_PATH] as string[] | undefined
-    const parentIdsPathFromAttribute = span.attributes?.[PARENT_SPAN_IDS_PATH] as
-      | StringUUID[]
-      | undefined
+    const parentIdsPathFromAttribute = span.attributes?.[PARENT_SPAN_IDS_PATH] as StringUUID[] | undefined
     const parentSpanId = getParentSpanId(span)
     const parentSpanPath =
-      parentPathFromAttribute ??
-      (parentSpanId !== undefined ? this.spanIdToPath.get(parentSpanId) : undefined)
+      parentPathFromAttribute ?? (parentSpanId !== undefined ? this.spanIdToPath.get(parentSpanId) : undefined)
     const parentSpanIdsPath =
-      parentIdsPathFromAttribute ??
-      (parentSpanId !== undefined ? this.spanIdLists.get(parentSpanId) : [])
+      parentIdsPathFromAttribute ?? (parentSpanId !== undefined ? this.spanIdLists.get(parentSpanId) : [])
 
     const spanId = span.spanContext().spanId
     const spanPath = parentSpanPath ? [...parentSpanPath, span.name] : [span.name]
@@ -128,6 +122,15 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
     span.setAttribute(SPAN_SDK_VERSION, SDK_VERSION)
     this.spanIdLists.set(spanId, spanIdsPath)
     this.spanIdToPath.set(spanId, spanPath)
+    if (spawningToolCallId) {
+      spawningToolSpanContexts[spawningToolCallId] = JSON.stringify({
+        traceId: otelSpanIdToUUID(span.spanContext().traceId),
+        spanId: spanIdUuid,
+        isRemote: false,
+        spanPath,
+        spanIdsPath,
+      })
+    }
 
     // 4. If this span descends from a tracked spawning tool call, tag it.
     if (spanIdsPath.length > 0) {
@@ -142,8 +145,7 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
       if (spawningToolCallSpanId) {
         span.setAttributes({
           "lmnr.spawning_subagent.span_id": spawningToolCallSpanId,
-          "lmnr.spawning_subagent.tool_use_id":
-            this.spawningSpanIdToToolUseId[spawningToolCallSpanId]!,
+          "lmnr.spawning_subagent.tool_use_id": this.spawningSpanIdToToolUseId[spawningToolCallSpanId]!,
         })
       }
     }
@@ -154,11 +156,14 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
 
   onEnd(span: ReadableSpan): void {
     const spanId = span.spanContext().spanId
+    const spanIdUuid = otelSpanIdToUUID(spanId)
+    const spawningToolCallId = this.spawningSpanIdToToolUseId[spanIdUuid]
+    if (spawningToolCallId) delete spawningToolSpanContexts[spawningToolCallId]
     this.spanIdLists.delete(spanId)
     this.spanIdToPath.delete(spanId)
     // spawningSpanIdToToolUseId is keyed by UUID (matches `lmnr.span.ids_path`
     // entries that the descendant scan iterates), not by the raw hex span id.
-    delete this.spawningSpanIdToToolUseId[otelSpanIdToUUID(spanId)]
+    delete this.spawningSpanIdToToolUseId[spanIdUuid]
     makeSpanOtelV2Compatible(span)
     this.inner.onEnd(span)
   }

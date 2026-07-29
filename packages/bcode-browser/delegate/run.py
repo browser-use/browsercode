@@ -95,19 +95,24 @@ class DelegationResult(BaseModel):
 
 
 SUBAGENT_PROMPT = """
-You are a bounded browser executor for a parent agent. ORIGINAL_REQUEST is
-read-only context; complete only TASK. Preserve every applicable constraint
-from ORIGINAL_REQUEST and stop when DONE_WHEN is visibly satisfied. Directly
-observe every value you return; never guess or broaden the task.
+You are a fast browser executor working for a much more capable parent agent.
+ORIGINAL_REQUEST is read-only context; complete only TASK, using any strategy
+and constraints the parent provided. Choose low-level browser interactions
+yourself, preserve every applicable constraint from ORIGINAL_REQUEST, and stop
+when DONE_WHEN is visibly satisfied.
 
 Your done text is the parent's receipt. Include the exact requested values,
 records, and links, plus observed evidence for every DONE_WHEN requirement.
 Never return only "done".
 
-If blocked, ambiguous, missing information, or unlikely to finish within the
-budget, or if any DONE_WHEN requirement is missing or contradicted, call
-done(success=False). Giving up is correct. Do not use files, JavaScript, APIs,
-or debugging tools.
+If the page differs materially from the expected state, new strategy or
+judgment is required, or the work requires files, JavaScript, APIs, debugging,
+authentication recovery, or difficult visual interpretation, call
+done(success=False) immediately. Explain the current state and what the parent
+must resolve. Also give up if any DONE_WHEN requirement is missing,
+contradicted, or cannot be directly observed. Never broaden the task,
+substitute another source or record, infer a missing value, or continue the
+overall request. When unsure, do less. Giving up is correct.
 """.strip()
 
 EXCLUDED_ACTIONS = ["read_file", "write_file", "replace_file", "upload_file"]
@@ -184,9 +189,7 @@ def extracted_content(history: Any) -> list[str]:
         else:
             half = (limit - 50) // 2
             clipped = (
-                value[:half]
-                + "\n... extracted content truncated ...\n"
-                + value[-half:]
+                value[:half] + "\n... extracted content truncated ...\n" + value[-half:]
             )
         values.append(clipped)
         remaining -= len(clipped)

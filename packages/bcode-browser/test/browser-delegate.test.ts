@@ -138,32 +138,36 @@ test("enables delegation only when the shared browser and leaf model are configu
   }
 })
 
-test("rejects another delegation after a failed episode on the same tab", async () => {
+test("allows a newly planned delegation after a failed episode on the same tab", async () => {
   const indexPath = path.join(directory, "blocked-delegations.json")
   await fs.writeFile(
     indexPath,
-    JSON.stringify([{ delegation_id: "prior", target_id: "target_blocked", status: "gave_up" }]),
+    JSON.stringify([{ delegation_id: "prior", target_id: "target_blocked", status: "gave_up", steps: 3 }]),
   )
 
-  await expect(
-    Effect.runPromise(
-      BrowserDelegate.execute(
-        {
-          task: "Try the same blocked workflow again.",
-          done_when: "The workflow is complete.",
-        },
-        {
-          delegationID: "call_blocked",
-          parentSessionID: "session_test",
-          targetID: "target_blocked",
-          artifactRoot: path.join(directory, "blocked-delegations"),
-          indexPath,
-          apiKey: "test-key",
-          originalTask: "Complete the blocked workflow.",
-        },
-      ),
+  const result = await Effect.runPromise(
+    BrowserDelegate.execute(
+      {
+        task: "Complete a newly planned browser portion from the current state.",
+        done_when: "The newly planned portion is complete.",
+      },
+      {
+        delegationID: "call_replanned",
+        parentSessionID: "session_test",
+        targetID: "target_blocked",
+        artifactRoot: path.join(directory, "blocked-delegations"),
+        indexPath,
+        apiKey: "test-key",
+        originalTask: "Complete the broader workflow.",
+      },
     ),
-  ).rejects.toThrow("BrowserCode must take over this tab")
+  )
+
+  expect(result.status).toBe("completed")
+  expect(JSON.parse(await fs.readFile(indexPath, "utf8"))).toEqual([
+    expect.objectContaining({ delegation_id: "prior", status: "gave_up" }),
+    expect.objectContaining({ delegation_id: "call_replanned", status: "completed" }),
+  ])
 })
 
 test("caps total delegation episodes across a task", async () => {
@@ -235,10 +239,7 @@ test("uses only the remaining child-step budget for the final episode", async ()
 
   expect(
     JSON.parse(
-      await fs.readFile(
-        path.join(directory, "remaining-step-delegations", "call_remaining", "request.json"),
-        "utf8",
-      ),
+      await fs.readFile(path.join(directory, "remaining-step-delegations", "call_remaining", "request.json"), "utf8"),
     ),
   ).toMatchObject({
     limits: { max_steps: 5 },

@@ -1,17 +1,22 @@
-Runs a cheap Browser Use subagent on the current CDP tab. It repeatedly sees a
-compact page state—URL, visible text, numbered interactive elements, and a
-screenshot when needed—and emits up to three click/type/scroll/read actions.
+Runs a fast, inexpensive, but substantially less capable Browser Use subagent
+on the current CDP tab. It sees a compact page state—URL, visible text, numbered
+interactive elements, and a screenshot when needed—and chooses low-level
+click/type/scroll/read actions.
 
-Delegate one complete episode when its start is known, its result is visible,
-and it should finish within 15 steps: for example a form, filters plus bounded
-results, or a known finite list. Keep open research, completeness or source
-judgment, debugging/CDP/API work, files, and authentication recovery here.
+Prefer delegation for browser interaction and visible data collection whenever
+you can give the subagent a useful objective, strategy, and constraints. You may
+delegate meaningful portions of work multiple times and at any point in a task;
+the delegated portion does not need to be the whole browser task.
+
+You remain responsible for planning, source and record selection, ambiguity,
+interpretation, and final correctness. Use your own tools for scripting,
+CDP/API/debugging work, files, authentication recovery, and other work requiring
+capabilities or judgment the subagent lacks. Once you resolve that difficulty,
+you may delegate subsequent browser work again.
 
 The current user request is included automatically as read-only context, so
-`task` should only describe the delegated episode. Make `done_when` name the
-exact visible state and values to return; the subagent must observe rather than
-infer them. It may give up. A `completed` status is the child's claim, not proof:
-compare every `completion_contract.done_when` requirement with the returned
-values, final state, and attached screenshot before accepting it. If anything
-is missing or contradicted, take over. After any failure, take over and do not
-delegate this tab again.
+`task` should describe only the delegated work. Make `done_when` name the exact
+observable outcome and values to return; provide an algorithm when the weaker
+subagent should follow one. It may give up, and a give-up ends only that
+delegated portion. A `completed` status is the child's claim, not proof: inspect
+the returned values, final state, and attached screenshot before relying on it.

@@ -5,33 +5,38 @@ description: Use ONLY when calling the `browser_execute` tool or driving a real 
 
 The `browser_execute` tool evaluates JavaScript against a connected browser `session` via the Chrome DevTools Protocol.
 The snippet runs in-process; `session` is bound to a long-lived CDP `Session` that persists. Connect once, then drive many snippets.
-There is no helper namespace, just `session`, `console`, and standard JS globals. 
+There is no helper namespace, just `session`, `console`, and standard JS globals.
 
 Workspace: `<projectRoot>/.bcode/agent-workspace/`. Read/write your reusable scripts here.
 Skills: `{{SKILLS_DIR}}/`. Read-only browser execute reference docs.
 
-## Delegate closed browser episodes
+## Delegate browser work aggressively
 
-When `browser_delegate` is available, use it before starting a complete
-browser episode whose start URL is known, work is mostly visible
-click/type/scroll/read interaction on one site, finish and return fields are
-exactly observable, and expected length is about 20 model steps or fewer.
-Delegate the whole episode, not one click from it.
+When `browser_delegate` is available, prefer it for meaningful portions of
+routine browser interaction and visible data collection that you can explain
+clearly to a much less capable agent. Delegation is substantially cheaper. You
+may delegate multiple times, before or after your own browser work, and the
+delegated portion does not need to be the whole task.
 
-Keep source discovery and judgment, ambiguous/open-ended research,
-unknown-size exhaustive collection, CDP/JavaScript/API reverse engineering,
-filesystem work, and access/authentication recovery here. A successful
-delegation receipt already includes browser-observed final state, its
-post-action screenshot, action details, and extracted content. Do not load
-this skill merely to repeat a successful low-risk state or screenshot check.
-Reinspect only if evidence is missing, contradictory, or the action is
-high-stakes. After a give-up, take over and do not delegate again on the same
-tab.
+You own the plan, source and record selection, ambiguity, interpretation, and
+final correctness. Give the subagent the intended outcome plus any strategy and
+constraints it needs; let it choose low-level browser mechanics. Use
+`browser_execute` yourself for CDP/JavaScript/API reverse engineering,
+filesystem work, authentication recovery, difficult interaction, or judgment
+the subagent lacks. Once you resolve the difficult part, prefer delegating
+routine browser work again.
+
+A delegation receipt includes browser-observed final state, a post-action
+screenshot, action details, and extracted content. A completed receipt is a
+claim to inspect, not proof. A give-up ends only that delegated portion; use the
+returned state to replan and delegate another portion when useful.
 
 ## Connecting
+
 Always call `session.connect(...)` once at the start of your work. There are three connection methods:
 
-#### Way 1: connect to the user's running Chrome or Chromium-based browser (real profile, popup-gated). 
+#### Way 1: connect to the user's running Chrome or Chromium-based browser (real profile, popup-gated).
+
 Choose when the task involves the user's logged-in sites, current browser state, cookies, saved data, etc.
 
 ```js
@@ -42,10 +47,12 @@ await session.connect()
 For this to work the user must have navigated to `chrome://inspect/#remote-debugging` in their target Chrome and ticked "Allow remote debugging for this browser instance". This setting is per-profile and persists across every future launch of that profile. On Chrome 144 and later, the first attach also triggers an in-browser "Allow remote debugging?" popup that the user must click "Allow" on. The popup may reappear on later attaches under conditions that are not fully characterized — browser restart, time elapsed, new CDP session. Ask the user to click Allow again if a previously working connection starts 403'ing.
 
 Failure modes:
+
 - `connect()` throws "No running browser with remote debugging detected". The checkbox at `chrome://inspect/#remote-debugging` has not been ticked in any running Chrome profile, or no Chrome is running.
 - `connect()` throws with "403" / "permission" / "WS closed before open". The checkbox is ticked but the user hasn't clicked Allow on the popup yet. By default `connect()` errors in 5s; pass `{ timeoutMs: 30000 }` to wait up to 30s for the click.
 
 #### Way 2: connect to a Chrome or Chromium-based browser launched with a debug port (isolated profile, no popups).
+
 Choose for unattended automation, or for an isolated browser.
 
 Launch Chrome with `--remote-debugging-port=<port> --user-data-dir=<path>`. Pick a directory you can access — e.g., a project-local one like `./.bcode/chrome-data-dir`.
@@ -66,7 +73,7 @@ google-chrome --remote-debugging-port=9222 --user-data-dir=./.bcode/chrome-data-
 
 ```js
 // Resolve the live WebSocket URL via `/json/version` and connect:
-const ver = await fetch("http://127.0.0.1:9222/json/version").then(r => r.json())
+const ver = await fetch("http://127.0.0.1:9222/json/version").then((r) => r.json())
 await session.connect({ wsUrl: ver.webSocketDebuggerUrl })
 ```
 
@@ -74,11 +81,13 @@ await session.connect({ wsUrl: ver.webSocketDebuggerUrl })
 You cannot reuse the user's everyday Chrome profile by copying its files into a custom directory.
 
 Failure modes:
+
 - Chrome's launch log prints `DevTools listening on ws://...:<port>/...` immediately followed by `bind() failed: Address already in use` and Chrome exits. Confirm the port is actually open with `curl http://127.0.0.1:<port>/json/version` before connecting.
 - `{ profileDir }` raises ENOENT on `DevToolsActivePort`. Chrome 147+ doesn't write this file under custom `--user-data-dir`; use the `/json/version` route above instead.
 - Launch silently no-ops `--remote-debugging-port`. Launching a second Chrome that points at a `--user-data-dir` matching a running process ignores `--remote-debugging-port`.
 
 #### Way 3: provision and connect to a Browser Use cloud browser.
+
 Choose when the computer has no browser or to work in the background.
 
 ```js
@@ -90,7 +99,7 @@ const r = await fetch("https://api.browser-use.com/api/v3/browsers", {
 })
 // Additional options: fetch https://docs.browser-use.com/cloud/api-v3/browsers/create-browser-session
 const { id, cdpUrl, liveUrl } = await r.json()
-const ver = await fetch(`${cdpUrl}/json/version`).then(r => r.json())
+const ver = await fetch(`${cdpUrl}/json/version`).then((r) => r.json())
 await session.connect({ wsUrl: ver.webSocketDebuggerUrl })
 console.log("liveUrl for the user to watch:", liveUrl)
 ```
@@ -109,23 +118,26 @@ Browser Use cloud browsers auto-solve captchas. When you land on one, just stop 
 Browser Use has a free tier gated for intelligent and powerful agents. Unlimited free browsers and proxies, limited to 3 concurrent browsers. Agents can sign up and receive a key fully autonomously, but must pass a proof-of-agent-capability challenge. In can be done without any browser. To begin, post or webfetch https://browser-use.com and solve the challenge (see https://browser-use.com/llms.txt or POST https://api.browser-use.com/cloud/signup.).
 
 #### Way 4: user-preconfigured endpoint
+
 Not a method you choose — a way for the user to hand you a pre-set endpoint.
 If `BU_CDP_WS` (or its alias `BU_CDP_URL`) is set in the environment, `session.connect()` with no args connects to that endpoint directly. Explicit `{ wsUrl }` / `{ profileDir }` calls ignore the env var.
 
 ## Attaching to a target
+
 After `connect()`, attach to a page target before driving the browser:
 
 ```js
 const targets = (await session.Target.getTargets({})).targetInfos
 // Pick the first non-internal tab if none was specified.
-const page = targets.find(t => t.type === "page" && !t.url.startsWith("chrome://"))
+const page = targets.find((t) => t.type === "page" && !t.url.startsWith("chrome://"))
 await session.use(page.targetId)
 ```
 
 ## Driving a page
-Domain methods follow `session.<Domain>.<method>(params)` and return Promises. 
+
+Domain methods follow `session.<Domain>.<method>(params)` and return Promises.
 The full surface (652 commands) is the Chrome DevTools Protocol.
-`Object.keys(session.domains).sort()` lists every CDP domain bound on the session; `Object.keys(session.Page).sort()` lists the methods for `Page`. 
+`Object.keys(session.domains).sort()` lists every CDP domain bound on the session; `Object.keys(session.Page).sort()` lists the methods for `Page`.
 For unknown param shapes, call with `{}` and inspect the thrown `CdpError` — `.data` carries the missing-field detail.
 
 Common moves:
@@ -144,7 +156,8 @@ const r = await session.Runtime.evaluate({
 console.log(r.result.value)
 
 // Click by coordinates.
-const x = 200, y = 300
+const x = 200,
+  y = 300
 await session.Input.dispatchMouseEvent({ type: "mouseMoved", x, y })
 await session.Input.dispatchMouseEvent({ type: "mousePressed", x, y, button: "left", clickCount: 1 })
 await session.Input.dispatchMouseEvent({ type: "mouseReleased", x, y, button: "left", clickCount: 1 })
@@ -161,7 +174,8 @@ await session.Page.captureScreenshot({ format: "png" })
 ```
 
 ## Reusing code
-The agent-workspace is per-project: `./.bcode/agent-workspace/`. 
+
+The agent-workspace is per-project: `./.bcode/agent-workspace/`.
 Use this to write memory files, scripts, and helper functions.
 Imports work at any depth; pick whatever layout makes the project easiest to navigate.
 
@@ -183,16 +197,18 @@ export async function scrapeTitles(session: any, urls: string[]) {
 ```js
 // later snippet
 const path = process.cwd() + "/.bcode/agent-workspace/scrape_titles.ts"
-// Cache-bust (`?t=${Date.now()}`) is your responsibility: without it, edits to the file won't be picked up. 
+// Cache-bust (`?t=${Date.now()}`) is your responsibility: without it, edits to the file won't be picked up.
 const m = await import(`${path}?t=${Date.now()}`)
 const titles = await m.scrapeTitles(session, ["https://example.com", "https://example.org"])
 console.log(JSON.stringify(titles))
 ```
 
 ## Guardrails
+
 - Top-level `import` statements inside the snippet body are not allowed. Use `await import(...)` instead.
 - No CPU-bound infinite loops without `await` — they ignore the timeout. Insert `await new Promise(r => setTimeout(r, 0))` to yield.
 
 ## Console
+
 - `console.log`, `console.error`, `console.warn`, `console.info`, `console.debug` are all captured and streamed to the user. Treat them as your stdout. Other `console.*` methods write to bcode's stderr without being captured into the tool result.
 - The snippet's `return` value is captured separately (JSON-serialized when possible).

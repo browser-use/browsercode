@@ -104,7 +104,7 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
       if (!cdpUrl) throw new Error("browser_delegate requires BU_CDP_WS or BU_CDP_URL")
 
       const delegationID = ctx.delegationID.replaceAll(/[^a-zA-Z0-9._-]/g, "_")
-      const maxSteps = await availableDelegationSteps(ctx.indexPath, ctx.targetID)
+      const maxSteps = await availableDelegationSteps(ctx.indexPath)
       const directory = path.join(ctx.artifactRoot, delegationID)
       const requestPath = path.join(directory, "request.json")
       const resultPath = path.join(directory, "result.json")
@@ -251,7 +251,7 @@ const appendIndex = async (indexPath: string, entry: Record<string, unknown>) =>
   await Bun.write(indexPath, JSON.stringify([...current, entry], null, 2) + "\n")
 }
 
-const availableDelegationSteps = async (indexPath: string, targetID: string | undefined) => {
+const availableDelegationSteps = async (indexPath: string) => {
   const file = Bun.file(indexPath)
   if (!(await file.exists())) return MAX_STEPS
   const current: unknown = await file.json()
@@ -263,28 +263,13 @@ const availableDelegationSteps = async (indexPath: string, targetID: string | un
   }
   const steps = current.reduce(
     (total, entry) =>
-      total +
-      (typeof entry === "object" && entry !== null && typeof entry.steps === "number" ? entry.steps : 0),
+      total + (typeof entry === "object" && entry !== null && typeof entry.steps === "number" ? entry.steps : 0),
     0,
   )
   if (steps >= MAX_DELEGATE_STEPS_PER_TASK) {
     throw new Error(
       `Browser Use reached the ${MAX_DELEGATE_STEPS_PER_TASK}-step task budget; BrowserCode must take over`,
     )
-  }
-  if (targetID) {
-    const priorFailure = current.find(
-      (entry): entry is Record<string, unknown> =>
-        typeof entry === "object" &&
-        entry !== null &&
-        entry.target_id === targetID &&
-        ["gave_up", "timed_out", "failed"].includes(String(entry.status)),
-    )
-    if (priorFailure) {
-      throw new Error(
-        `Browser Use already ${String(priorFailure.status)} on target ${targetID}; BrowserCode must take over this tab`,
-      )
-    }
   }
   return Math.min(MAX_STEPS, MAX_DELEGATE_STEPS_PER_TASK - steps)
 }

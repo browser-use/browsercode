@@ -83,6 +83,17 @@ function isOrphanedInterruptedTool(part: SessionV1.ToolPart) {
   return part.state.status === "error" && part.state.metadata?.interrupted === true
 }
 
+function isFinalExpertAudit(part: SessionV1.Part) {
+  if (part.type !== "tool" || part.tool !== "ask_expert") return false
+  if (!["completed", "error"].includes(part.state.status)) return false
+  const input = part.state.input
+  if (!input || typeof input !== "object" || !("request" in input)) return false
+  return (
+    typeof (input as { request?: unknown }).request === "string" &&
+    (input as { request: string }).request.startsWith("Finalization gate:")
+  )
+}
+
 export interface Interface {
   readonly cancel: (sessionID: SessionID) => Effect.Effect<void>
   readonly prompt: (input: PromptInput) => Effect.Effect<SessionV1.WithParts, Image.Error>
@@ -1349,13 +1360,7 @@ export const layer = Layer.effect(
             const expertAuditAttempt = process.env.BROWSER_EXPERT_MODEL
               ? yield* sessions.findMessage(
                   sessionID,
-                  (message) =>
-                    message.parts.some(
-                      (part) =>
-                        part.type === "tool" &&
-                        part.tool === "ask_expert" &&
-                        ["completed", "error"].includes(part.state.status),
-                    ),
+                  (message) => message.parts.some(isFinalExpertAudit),
                 ).pipe(Effect.orDie)
               : Option.none<SessionV1.WithParts>()
 

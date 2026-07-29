@@ -46,6 +46,7 @@ export const AskExpertTool = Tool.define(
             permission: [...(parent.permission ?? []), { permission: "ask_expert", pattern: "*", action: "deny" }],
           })
           SessionStore.share(ctx.sessionID, expert.id)
+          const finalAudit = args.request.startsWith("Finalization gate:")
 
           yield* ctx.metadata({
             title: "Expert takeover",
@@ -53,13 +54,13 @@ export const AskExpertTool = Tool.define(
               parentSessionId: ctx.sessionID,
               expertSessionId: expert.id,
               model,
+              finalAudit,
             },
           })
 
           const ops = ctx.extra?.promptOps as TaskPromptOps
           if (!ops) return yield* Effect.fail(new Error("AskExpertTool requires promptOps in ctx.extra"))
 
-          const finalAudit = args.request.startsWith("Finalization gate:")
           const parts = yield* ops.resolvePromptParts(
             [
               "You are the expert continuation of the agent whose complete context you inherited.",
@@ -149,6 +150,7 @@ export const AskExpertTool = Tool.define(
               parentSessionId: ctx.sessionID,
               expertSessionId: expert.id,
               model,
+              finalAudit,
               browserState,
             },
             attachments,

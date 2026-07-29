@@ -67,7 +67,7 @@ export const AskExpertTool = Tool.define(
               "You share its exact live browser session and workspace. Inspect before acting; do not merely give advice when a direct intervention is needed.",
               "The CDP session is already connected and preserves the parent's active target. Check session.isConnected() and do not reconnect when it is true.",
               finalAudit
-                ? "This is the finalization audit. Check every original requirement, requested source, record identity, field, coverage claim, calculation, artifact, and evidence. Repair missing or incorrect work yourself before handing back."
+                ? "This is the finalization audit. Check every original requirement, requested source, record identity, field, coverage claim, calculation, artifact, and evidence. For any 'all', exhaustive, or 'up to N' collection, independently verify pagination, scrolling, or API coverage and saved row counts; never treat the first visible page as complete. Repair missing or incorrect work yourself before handing back."
                 : "This is a mid-task handoff. Make the smallest sufficient intervention that unblocks the primary agent, leave the browser in a clear resumable state, and hand back immediately. Do not complete the remaining task, extraction, or artifact even if the request is phrased too broadly.",
               "Do not call ask_expert. Stop as soon as the issue is genuinely resolved or you have a concrete external blocker.",
               "End with a compact handback receipt containing: status (resolved or blocked), what you changed, evidence/artifacts, and any remaining issue.",

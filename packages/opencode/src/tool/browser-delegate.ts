@@ -86,6 +86,10 @@ export const BrowserDelegateTool = Tool.define(
                 ]
               : []
           const parentFacingStatus = result.status === "completed" ? "claimed_complete" : result.status
+          const receiptGuidance =
+            result.status === "completed"
+              ? "Inspect the receipt against done_when. Its browser-observed values, final state, and screenshot can be sufficient evidence; do not replay successful work unless that evidence is missing or contradictory."
+              : "DONE_WHEN was not satisfied. Treat observed_values and final_state only as partial context, never as task results, unless you independently complete or verify the missing requirements."
           return {
             title: `browser_delegate: ${parentFacingStatus}`,
             output: [
@@ -95,13 +99,15 @@ export const BrowserDelegateTool = Tool.define(
                   completion_contract: {
                     done_when: result.done_when,
                     child_claimed_success: result.done_condition_claimed,
-                    parent_must_verify: true,
+                    verification: "inspect_receipt_evidence",
                   },
+                  receipt_guidance: receiptGuidance,
                   result: result.summary,
                   result_truncated: result.result_truncated,
                   full_result_artifact: resultArtifact,
                   observed_values: result.extracted_content,
                   actions: result.action_digest,
+                  action_evidence: result.status === "completed" ? [] : result.action_details,
                   initial_state: {
                     url: result.initial_url,
                     title: result.initial_title,

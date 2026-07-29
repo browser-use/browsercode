@@ -103,7 +103,9 @@ when DONE_WHEN is visibly satisfied.
 
 Your done text is the parent's receipt. Include the exact requested values,
 records, and links, plus observed evidence for every DONE_WHEN requirement.
-Never return only "done".
+Never return only "done". For category, filter, or ordered-result work, the
+receipt must preserve and prove that exact page state and ordering. A text
+search for a label is not the same as applying that category or filter.
 
 If the page differs materially from the expected state, new strategy or
 judgment is required, or the work requires files, JavaScript, APIs, debugging,
@@ -176,15 +178,33 @@ def action_details(action_history: list[list[dict[str, Any]]]) -> list[str]:
 
 
 def extracted_content(history: Any) -> list[str]:
-    values: list[str] = []
-    remaining = 6000
-    for raw_value in reversed(history.extracted_content()):
+    chronological_values: list[str] = []
+    for raw_value in history.extracted_content():
+        value = str(raw_value or "").strip()
+        if not value or value in chronological_values:
+            continue
+        chronological_values.append(value)
+
+    # Preserve both early discoveries and the final state. Prioritizing only the
+    # last observations made a give-up receipt lose useful work completed before
+    # the blocker.
+    candidate_indexes: list[int] = []
+    left = 0
+    right = len(chronological_values) - 1
+    while left <= right and len(candidate_indexes) < 16:
+        candidate_indexes.append(left)
+        if left != right and len(candidate_indexes) < 16:
+            candidate_indexes.append(right)
+        left += 1
+        right -= 1
+
+    values: list[tuple[int, str]] = []
+    remaining = 10_000
+    for index in sorted(candidate_indexes):
         if remaining < 100:
             break
-        value = str(raw_value or "").strip()
-        if not value or value in values:
-            continue
-        limit = min(len(value), remaining)
+        value = chronological_values[index]
+        limit = min(len(value), remaining, 1_200)
         if len(value) <= limit:
             clipped = value
         else:
@@ -192,11 +212,9 @@ def extracted_content(history: Any) -> list[str]:
             clipped = (
                 value[:half] + "\n... extracted content truncated ...\n" + value[-half:]
             )
-        values.append(clipped)
+        values.append((index, clipped))
         remaining -= len(clipped)
-        if remaining <= 0 or len(values) >= 10:
-            break
-    return list(reversed(values))
+    return [value for _, value in values]
 
 
 def compact_result(value: str, limit: int = 4000) -> tuple[str, bool]:

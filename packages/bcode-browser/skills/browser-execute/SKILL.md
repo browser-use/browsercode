@@ -16,7 +16,8 @@ When `browser_delegate` is available, default to it for a coherent browser
 episode whose receipt lets you skip substantial browser work: multi-step
 navigation, forms, filters, pagination, or bounded visible data collection.
 Delegation is substantially cheaper and may happen multiple times as the task
-evolves.
+evolves. Do not delegate a lookup you can finish with one `browser_execute`
+call.
 
 Decide the strategy first. Keep unresolved research, source or record judgment,
 CDP/JavaScript/API/PDF/file work, authentication recovery, aggregation, and
@@ -26,8 +27,10 @@ narrower browser episode; do not weaken the user's requirements.
 
 A delegation receipt includes browser-observed final state, a post-action
 screenshot, action details, and extracted content. A `claimed_complete` receipt
-is not proof. A give-up ends only that delegated portion; use the returned state
-to replan and delegate another portion when useful.
+is not proof: inspect it against `done_when`. Receipt evidence can be
+sufficient; do not replay successful work merely to verify it. A give-up ends
+only that delegated portion. Its returned values and state are partial context,
+not task results, unless you independently complete or verify them.
 
 For an all-results or large extraction, write the canonical output artifact
 incrementally as data is collected. Auto-saved tool output and model context are

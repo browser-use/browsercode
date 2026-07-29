@@ -8,9 +8,12 @@ import { BrowserExecute } from "@browser-use/bcode-browser/browser-execute"
 import { Global } from "@opencode-ai/core/global"
 import { InstanceState } from "@/effect/instance-state"
 import * as Tool from "./tool"
+import { Truncate } from "./truncate"
 import DESCRIPTION from "./browser-execute.txt"
 
 const MAX_METADATA_LENGTH = 30_000
+const MAX_CONTEXT_BYTES = 8 * 1024
+const MAX_CONTEXT_LINES = 400
 const preview = (text: string) =>
   text.length <= MAX_METADATA_LENGTH ? text : "...\n\n" + text.slice(-MAX_METADATA_LENGTH)
 
@@ -24,6 +27,7 @@ export const BrowserExecuteTool = Tool.define(
   "browser_execute",
   Effect.gen(function* () {
     const impl = yield* BrowserExecute.make(Global.Path.data)
+    const truncate = yield* Truncate.Service
     return {
       // Substitute the resolved skills path so `{{SKILLS_DIR}}` references in
       // the description point at a concrete location. Workspace is
@@ -66,18 +70,28 @@ export const BrowserExecuteTool = Tool.define(
             mime: s.mime,
             url: `data:${s.mime};base64,${s.base64}`,
           }))
+          const fullOutput = [
+            result.output.trimEnd(),
+            result.result === "null" ? "" : `=> ${result.result}`,
+            attachments.length > 0
+              ? `(${attachments.length} screenshot${attachments.length === 1 ? "" : "s"} attached)`
+              : "",
+          ]
+            .filter(Boolean)
+            .join("\n\n")
+          const contextualOutput = yield* truncate.output(fullOutput, {
+            maxBytes: MAX_CONTEXT_BYTES,
+            maxLines: MAX_CONTEXT_LINES,
+          })
           return {
             title: "browser_execute",
-            output: [
-              result.output.trimEnd(),
-              result.result === "null" ? "" : `=> ${result.result}`,
-              attachments.length > 0
-                ? `(${attachments.length} screenshot${attachments.length === 1 ? "" : "s"} attached)`
-                : "",
-            ]
-              .filter(Boolean)
-              .join("\n\n"),
-            metadata: { result: result.result, output: preview(result.output) },
+            output: contextualOutput.content,
+            metadata: {
+              result: result.result,
+              output: preview(result.output),
+              truncated: contextualOutput.truncated,
+              ...(contextualOutput.truncated && { outputPath: contextualOutput.outputPath }),
+            },
             attachments,
           }
         }).pipe(Effect.orDie),

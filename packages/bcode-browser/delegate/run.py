@@ -74,7 +74,11 @@ class DelegationResult(BaseModel):
     schema_version: Literal[1] = 1
     delegation_id: str
     status: Literal["completed", "gave_up", "timed_out", "failed"]
+    done_when: str
     summary: str
+    result_artifact: str | None = None
+    result_length_chars: int = 0
+    result_truncated: bool = False
     action_digest: list[str] = Field(default_factory=list)
     action_details: list[str] = Field(default_factory=list)
     extracted_content: list[str] = Field(default_factory=list)
@@ -169,15 +173,38 @@ def extracted_content(history: Any) -> list[str]:
     values: list[str] = []
     remaining = 6000
     for raw_value in reversed(history.extracted_content()):
+        if remaining < 100:
+            break
         value = str(raw_value or "").strip()
         if not value or value in values:
             continue
-        clipped = value[-min(len(value), remaining) :]
+        limit = min(len(value), remaining)
+        if len(value) <= limit:
+            clipped = value
+        else:
+            half = (limit - 50) // 2
+            clipped = (
+                value[:half]
+                + "\n... extracted content truncated ...\n"
+                + value[-half:]
+            )
         values.append(clipped)
         remaining -= len(clipped)
         if remaining <= 0 or len(values) >= 10:
             break
     return list(reversed(values))
+
+
+def compact_result(value: str, limit: int = 4000) -> tuple[str, bool]:
+    if len(value) <= limit:
+        return value, False
+    half = (limit - 70) // 2
+    return (
+        value[:half]
+        + "\n\n... complete result saved in final_result.txt ...\n\n"
+        + value[-half:],
+        True,
+    )
 
 
 def compact_excerpt(value: str, limit: int = 12000) -> tuple[str, bool]:
@@ -469,16 +496,45 @@ DONE_WHEN
     status: Literal["completed", "gave_up"] = (
         "completed" if success is True else "gave_up"
     )
-    summary = history.final_result() or (
-        "Browser Use reached the delegation step limit without claiming completion."
-        if not history.is_done()
-        else "Browser Use gave up without a summary."
-    )
+    final_result = (history.final_result() or "").strip() if history.is_done() else ""
+    result_artifact = "final_result.txt" if final_result else None
+    if result_artifact:
+        (directory / result_artifact).write_text(final_result + "\n")
+    if final_result:
+        summary, result_truncated = compact_result(final_result)
+    else:
+        summary, _ = compact_result(
+            (
+                "Browser Use ended without satisfying DONE_WHEN: "
+                f"{request.done_when}\nFinal observed page: "
+                f"{observed_state.title or '(untitled)'} "
+                f"({observed_state.url or 'unknown URL'})."
+            )
+            if not history.is_done()
+            else "Browser Use gave up without a completion receipt."
+        )
+        result_truncated = False
+    errors = [str(error) for error in history.errors() if error]
+    blocker = None
+    if success is not True:
+        blocker = (
+            compact_result(final_result, 2000)[0]
+            if final_result
+            else (
+                f"{summary} Recent errors: {'; '.join(errors[-3:])}"
+                if errors
+                else summary
+            )
+        )
     urls = [url for url in history.urls() if url]
     result = DelegationResult(
         delegation_id=request.delegation_id,
         status=status,
-        summary=summary[-2000:],
+        done_when=request.done_when,
+        summary=summary,
+        result_artifact=result_artifact,
+        result_length_chars=len(final_result),
+        result_truncated=result_truncated,
         action_digest=action_digest(history.action_history()),
         action_details=action_details(history.action_history()),
         extracted_content=extracted_content(history),
@@ -487,7 +543,10 @@ DONE_WHEN
         initial_title=initial_title,
         final_url=observed_state.url or (urls[-1] if urls else ""),
         observed_state_after=observed_state,
-        blocker=None if success is True else summary[-1000:],
+        blocker=blocker,
+        uncertainties=(
+            [observed_state.capture_error] if observed_state.capture_error else []
+        ),
         metrics=DelegationMetrics(
             duration_seconds=round(time.monotonic() - started, 3),
             steps=len(history),
@@ -504,6 +563,7 @@ DONE_WHEN
                 if observed_state.screenshot_artifact
                 else []
             ),
+            *([result_artifact] if result_artifact else []),
             "result.json",
             "history.json",
             "actions.jsonl",
@@ -538,6 +598,7 @@ async def main() -> int:
         result = DelegationResult(
             delegation_id=request.delegation_id,
             status="failed",
+            done_when=request.done_when,
             summary=f"{type(error).__name__}: {error}",
             blocker=f"{type(error).__name__}: {error}",
             metrics=DelegationMetrics(

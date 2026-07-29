@@ -5,4 +5,6 @@ Usage:
 - Use this tool to read webpages that block the webfetch tool.
 - IMPORTANT: you MUST use the skill tool first to load the `browser-execute` skill. This tool will fail if you did not read those directions first.
 - If a complete closed browser episode qualifies for browser_delegate, delegate the whole episode before performing any part of it here.
+- Return only the fields needed for the current decision. Large output is saved automatically; inspect that file with focused Grep/Read calls instead of loading it whole.
+- After three browser calls that add no new evidence toward the requested result, stop probing the same strategy: change approach, report the blocker, or finish.
 - Returns console output from the snippet; screenshots taken attach automatically as images.

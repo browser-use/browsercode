@@ -13,6 +13,8 @@ const MAX_STEPS = 15
 const MAX_ACTIONS_PER_STEP = 3
 const PROCESS_TIMEOUT_MS = 300_000
 const SHUTDOWN_GRACE_MS = 5_000
+const MAX_DELEGATIONS_PER_TASK = 4
+const MAX_DELEGATE_STEPS_PER_TASK = 45
 
 export const enabled = () =>
   Boolean(
@@ -36,7 +38,11 @@ const resultSchema = Schema.Struct({
   schema_version: Schema.Literal(1),
   delegation_id: Schema.String,
   status: Schema.Literals(["completed", "gave_up", "timed_out", "failed"]),
+  done_when: Schema.String,
   summary: Schema.String,
+  result_artifact: Schema.NullOr(Schema.String),
+  result_length_chars: Schema.Number,
+  result_truncated: Schema.Boolean,
   action_digest: Schema.Array(Schema.String),
   action_details: Schema.Array(Schema.String),
   extracted_content: Schema.Array(Schema.String),
@@ -98,7 +104,7 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
       if (!cdpUrl) throw new Error("browser_delegate requires BU_CDP_WS or BU_CDP_URL")
 
       const delegationID = ctx.delegationID.replaceAll(/[^a-zA-Z0-9._-]/g, "_")
-      await rejectAfterFailedDelegation(ctx.indexPath, ctx.targetID)
+      const maxSteps = await availableDelegationSteps(ctx.indexPath, ctx.targetID)
       const directory = path.join(ctx.artifactRoot, delegationID)
       const requestPath = path.join(directory, "request.json")
       const resultPath = path.join(directory, "result.json")
@@ -121,7 +127,7 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
             task: args.task,
             done_when: args.done_when,
             limits: {
-              max_steps: MAX_STEPS,
+              max_steps: maxSteps,
               max_actions_per_step: MAX_ACTIONS_PER_STEP,
               timeout_seconds: PROCESS_TIMEOUT_MS / 1000,
             },
@@ -186,7 +192,11 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
               schema_version: 1,
               delegation_id: delegationID,
               status: "timed_out",
+              done_when: args.done_when,
               summary: "Browser Use reached the 300 second delegation deadline.",
+              result_artifact: null,
+              result_length_chars: 0,
+              result_truncated: false,
               action_digest: [],
               action_details: [],
               extracted_content: [],
@@ -226,6 +236,7 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
         task: args.task,
         done_when: args.done_when,
         status: result.status,
+        steps: result.metrics.steps,
         result: path.relative(path.dirname(ctx.indexPath), resultPath),
       })
       return { ...result, artifact_directory: directory }
@@ -240,23 +251,42 @@ const appendIndex = async (indexPath: string, entry: Record<string, unknown>) =>
   await Bun.write(indexPath, JSON.stringify([...current, entry], null, 2) + "\n")
 }
 
-const rejectAfterFailedDelegation = async (indexPath: string, targetID: string | undefined) => {
-  if (!targetID) return
+const availableDelegationSteps = async (indexPath: string, targetID: string | undefined) => {
   const file = Bun.file(indexPath)
-  if (!(await file.exists())) return
+  if (!(await file.exists())) return MAX_STEPS
   const current: unknown = await file.json()
   if (!Array.isArray(current)) throw new Error(`${indexPath} must contain a JSON array`)
-  const priorFailure = current.find(
-    (entry): entry is Record<string, unknown> =>
-      typeof entry === "object" &&
-      entry !== null &&
-      entry.target_id === targetID &&
-      ["gave_up", "timed_out", "failed"].includes(String(entry.status)),
+  if (current.length >= MAX_DELEGATIONS_PER_TASK) {
+    throw new Error(
+      `Browser Use reached the ${MAX_DELEGATIONS_PER_TASK}-episode task budget; BrowserCode must take over`,
+    )
+  }
+  const steps = current.reduce(
+    (total, entry) =>
+      total +
+      (typeof entry === "object" && entry !== null && typeof entry.steps === "number" ? entry.steps : 0),
+    0,
   )
-  if (!priorFailure) return
-  throw new Error(
-    `Browser Use already ${String(priorFailure.status)} on target ${targetID}; BrowserCode must take over this tab`,
-  )
+  if (steps >= MAX_DELEGATE_STEPS_PER_TASK) {
+    throw new Error(
+      `Browser Use reached the ${MAX_DELEGATE_STEPS_PER_TASK}-step task budget; BrowserCode must take over`,
+    )
+  }
+  if (targetID) {
+    const priorFailure = current.find(
+      (entry): entry is Record<string, unknown> =>
+        typeof entry === "object" &&
+        entry !== null &&
+        entry.target_id === targetID &&
+        ["gave_up", "timed_out", "failed"].includes(String(entry.status)),
+    )
+    if (priorFailure) {
+      throw new Error(
+        `Browser Use already ${String(priorFailure.status)} on target ${targetID}; BrowserCode must take over this tab`,
+      )
+    }
+  }
+  return Math.min(MAX_STEPS, MAX_DELEGATE_STEPS_PER_TASK - steps)
 }
 
 const traceID = (context: string | undefined): string | null => {

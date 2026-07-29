@@ -56,6 +56,22 @@ export const BrowserDelegateTool = Tool.define(
               ? path.join(result.artifact_directory, screenshotArtifact)
               : undefined
           const screenshotFile = screenshotPath ? Bun.file(screenshotPath) : undefined
+          const resultArtifact =
+            result.result_artifact && path.basename(result.result_artifact) === result.result_artifact
+              ? path.join(result.artifact_directory, result.result_artifact)
+              : null
+          const finalState = result.observed_state_after
+            ? {
+                url: result.observed_state_after.url,
+                title: result.observed_state_after.title,
+                page_excerpt: compactText(result.observed_state_after.page_excerpt),
+                page_excerpt_truncated:
+                  result.observed_state_after.page_excerpt_truncated ||
+                  result.observed_state_after.page_excerpt.length > 4_000,
+                screenshot_artifact: result.observed_state_after.screenshot_artifact,
+                capture_error: result.observed_state_after.capture_error,
+              }
+            : null
           const attachments =
             screenshotFile && (yield* Effect.promise(() => screenshotFile.exists()))
               ? [
@@ -74,10 +90,21 @@ export const BrowserDelegateTool = Tool.define(
               JSON.stringify(
                 {
                   status: result.status,
+                  completion_contract: {
+                    done_when: result.done_when,
+                    child_claimed_success: result.done_condition_claimed,
+                    parent_must_verify: true,
+                  },
                   result: result.summary,
+                  result_truncated: result.result_truncated,
+                  full_result_artifact: resultArtifact,
                   observed_values: result.extracted_content,
-                  actions: result.action_details,
-                  final_state: result.observed_state_after,
+                  actions: result.action_digest,
+                  initial_state: {
+                    url: result.initial_url,
+                    title: result.initial_title,
+                  },
+                  final_state: finalState,
                   unresolved: [result.blocker, ...result.uncertainties].filter(
                     (value): value is string => Boolean(value),
                   ),
@@ -113,4 +140,9 @@ const currentUserRequest = (ctx: Tool.Context) => {
     .flatMap((part) => (part.type === "text" && !part.synthetic ? [part.text.trim()] : []))
     .filter(Boolean)
     .join("\n\n")
+}
+
+const compactText = (value: string) => {
+  if (value.length <= 4_000) return value
+  return value.slice(0, 1_965) + "\n\n... final state excerpt truncated ...\n\n" + value.slice(-1_965)
 }

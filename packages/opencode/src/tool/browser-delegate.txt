@@ -10,6 +10,8 @@ judgment, debugging/CDP/API work, files, and authentication recovery here.
 The current user request is included automatically as read-only context, so
 `task` should only describe the delegated episode. Make `done_when` name the
 exact visible state and values to return; the subagent must observe rather than
-infer them. It may give up. On success, use its returned actions, values, final
-state, and attached screenshot directly. On failure, take over and do not
+infer them. It may give up. A `completed` status is the child's claim, not proof:
+compare every `completion_contract.done_when` requirement with the returned
+values, final state, and attached screenshot before accepting it. If anything
+is missing or contradicted, take over. After any failure, take over and do not
 delegate this tab again.

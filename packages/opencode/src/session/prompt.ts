@@ -1346,6 +1346,19 @@ export const layer = Layer.effect(
               toolChoice: format.type === "json_schema" ? "required" : undefined,
             })
 
+            const expertAuditAttempt = process.env.BROWSER_EXPERT_MODEL
+              ? yield* sessions.findMessage(
+                  sessionID,
+                  (message) =>
+                    message.parts.some(
+                      (part) =>
+                        part.type === "tool" &&
+                        part.tool === "ask_expert" &&
+                        ["completed", "error"].includes(part.state.status),
+                    ),
+                ).pipe(Effect.orDie)
+              : Option.none<SessionV1.WithParts>()
+
             if (structured !== undefined) {
               handle.message.structured = structured
               handle.message.finish = handle.message.finish ?? "stop"
@@ -1374,6 +1387,109 @@ export const layer = Layer.effect(
                 }).toObject()
                 yield* sessions.updateMessage(handle.message)
                 return "break" as const
+              }
+            }
+
+            if (
+              process.env.BROWSER_EXPERT_MODEL &&
+              !session.parentID &&
+              Option.isNone(expertAuditAttempt) &&
+              handle.message.finish &&
+              !["tool-calls", "unknown", "content-filter"].includes(handle.message.finish) &&
+              !handle.message.error
+            ) {
+              const expertTool = (yield* registry.all()).find((item) => item.id === "ask_expert")
+              if (expertTool && tools["ask_expert"]) {
+                const callID = ulid()
+                const auditInput = {
+                  request:
+                    "Finalization gate: audit the proposed answer and all completed work against every original requirement. Inspect the live browser and artifacts, repair missing or incorrect work yourself, then return a compact receipt so the primary agent can give its final answer.",
+                }
+                const started = Date.now()
+                let part: SessionV1.ToolPart = yield* sessions.updatePart({
+                  id: PartID.ascending(),
+                  messageID: handle.message.id,
+                  sessionID,
+                  type: "tool",
+                  callID,
+                  tool: "ask_expert",
+                  state: {
+                    status: "running",
+                    input: auditInput,
+                    time: { start: started },
+                  },
+                })
+
+                const audit = yield* expertTool
+                  .execute(auditInput, {
+                    sessionID,
+                    messageID: handle.message.id,
+                    agent: agent.name,
+                    abort: new AbortController().signal,
+                    callID,
+                    extra: { model, bypassAgentCheck, promptOps },
+                    messages: msgs,
+                    metadata: (value) =>
+                      sessions
+                        .updatePart({
+                          ...part,
+                          state: {
+                            status: "running",
+                            input: auditInput,
+                            title: value.title,
+                            metadata: value.metadata,
+                            time: { start: started },
+                          },
+                        })
+                        .pipe(Effect.tap((updated) => Effect.sync(() => (part = updated))), Effect.asVoid),
+                    ask: (request) =>
+                      permission
+                        .ask({
+                          ...request,
+                          sessionID,
+                          tool: { messageID: handle.message.id, callID },
+                          ruleset: Permission.merge(agent.permission, session.permission ?? []),
+                        })
+                        .pipe(Effect.orDie),
+                  })
+                  .pipe(Effect.exit)
+
+                handle.message.finish = "tool-calls"
+                handle.message.time.completed = Date.now()
+                yield* sessions.updateMessage(handle.message)
+
+                if (Exit.isFailure(audit)) {
+                  const error = Cause.squash(audit.cause)
+                  part = yield* sessions.updatePart({
+                    ...part,
+                    state: {
+                      status: "error",
+                      input: auditInput,
+                      error: `Automatic expert audit failed: ${error instanceof Error ? error.message : String(error)}`,
+                      time: { start: started, end: Date.now() },
+                    },
+                  })
+                } else {
+                  const output = audit.value
+                  part = yield* sessions.updatePart({
+                    ...part,
+                    state: {
+                      status: "completed",
+                      input: auditInput,
+                      title: output.title,
+                      metadata: output.metadata,
+                      output: output.output,
+                      attachments: output.attachments?.map((attachment) => ({
+                        ...attachment,
+                        id: PartID.ascending(),
+                        sessionID,
+                        messageID: handle.message.id,
+                      })),
+                      time: { start: started, end: Date.now() },
+                    },
+                  })
+                }
+                return "continue" as const
               }
             }
 

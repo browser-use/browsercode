@@ -1,0 +1,15 @@
+Forks the complete current conversation to a stronger BrowserCode model. The
+expert shares the exact live CDP session and workspace, can act in the browser,
+and returns control here with a compact receipt and fresh browser state.
+
+Use it as soon as strategy becomes unclear, the page behaves unexpectedly, a
+source or record must be substituted, progress stalls, or an important claim is
+not supported by evidence. Also use it before the first final answer to audit
+the original requirements, coverage, required fields, calculations, artifacts,
+and evidence. If a previous expert call already performed that final audit, do
+not call again merely for ceremony.
+
+Obvious clicks, typing, scrolling, and already-clear browser sequences do not
+need an early handoff. Giving up early is good: ask the expert instead of
+repeating a weak strategy. The `request` should state only what is uncertain or
+what must be checked; the full conversation is inherited automatically.

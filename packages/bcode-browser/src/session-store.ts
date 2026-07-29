@@ -27,6 +27,14 @@ export const get = (sessionID: string): Session => {
   return fresh
 }
 
+export const share = (sourceSessionID: string, targetSessionID: string): void => {
+  sessions.set(targetSessionID, get(sourceSessionID))
+}
+
+export const forget = (sessionID: string): void => {
+  sessions.delete(sessionID)
+}
+
 export const evict = async (sessionID: string): Promise<void> => {
   const entry = sessions.get(sessionID)
   if (!entry) return

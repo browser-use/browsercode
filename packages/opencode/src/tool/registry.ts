@@ -15,6 +15,7 @@ import { TodoWriteTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
 import { BrowserExecuteTool } from "./browser-execute"
+import { AskExpertTool } from "./ask-expert"
 import { InvalidTool } from "./invalid"
 import { SkillTool } from "./skill"
 import * as Tool from "./tool"
@@ -108,6 +109,7 @@ export const layer = Layer.effect(
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
     const browserExecute = yield* BrowserExecuteTool
+    const askExpert = process.env.BROWSER_EXPERT_MODEL ? yield* AskExpertTool : undefined
     const agent = yield* Agent.Service
 
     const state = yield* InstanceState.make<State>(
@@ -212,6 +214,7 @@ export const layer = Layer.effect(
           search: Tool.init(websearch),
           skill: Tool.init(skilltool),
           browserExecute: Tool.init(browserExecute),
+          ...(askExpert ? { askExpert: Tool.init(askExpert) } : {}),
           patch: Tool.init(patchtool),
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
@@ -235,6 +238,7 @@ export const layer = Layer.effect(
             tool.search,
             tool.skill,
             tool.browserExecute,
+            ...(tool.askExpert ? [tool.askExpert] : []),
             tool.patch,
             ...(flags.experimentalLspTool ? [tool.lsp] : []),
             ...(flags.experimentalPlanMode && flags.client === "cli" ? [tool.plan] : []),

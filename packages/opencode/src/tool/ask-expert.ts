@@ -70,7 +70,7 @@ export const AskExpertTool = Tool.define(
                 ? "This is the finalization audit. First compare every original requirement with the inherited transcript, proposed answer, and existing evidence. If they already provide explicit support, return a resolved receipt immediately without using tools, re-browsing, or improving correct work. Use tools only for a concrete gap or contradiction, then repair exactly that issue. For any 'all', exhaustive, or 'up to N' collection, require explicit pagination, scrolling, or API coverage and matching saved row counts; never treat the first visible page as complete."
                 : "This is a mid-task handoff. Make the smallest sufficient intervention that unblocks the primary agent, leave the browser in a clear resumable state, and hand back immediately. Do not complete the remaining task, extraction, or artifact even if the request is phrased too broadly.",
               "Do not call ask_expert. Stop as soon as the issue is genuinely resolved or you have a concrete external blocker.",
-              "End with a compact handback receipt containing: status (resolved or blocked), what you changed, evidence/artifacts, and any remaining issue.",
+              "Do not emit progress or commentary. Respond once with a compact final handback receipt containing: status (resolved or blocked), what you changed, evidence/artifacts, and any remaining issue.",
               "",
               `<handoff_request>${args.request}</handoff_request>`,
             ].join("\n"),

@@ -2,14 +2,17 @@ Forks the complete current conversation to a stronger BrowserCode model. The
 expert shares the exact live CDP session and workspace, can act in the browser,
 and returns control here with a compact receipt and fresh browser state.
 
-Use it as soon as strategy becomes unclear, the page behaves unexpectedly, a
-source or record must be substituted, progress stalls, or an important claim is
-not supported by evidence. Also use it before the first final answer to audit
-the original requirements, coverage, required fields, calculations, artifacts,
-and evidence. If a previous expert call already performed that final audit, do
-not call again merely for ceremony.
+Use it only when you cannot reliably continue after inspecting fresh state and
+trying the obvious recovery: the required strategy remains unclear, an
+important source/record decision is ambiguous, progress is genuinely stalled,
+or a required claim cannot be supported. A single navigation timeout is not a
+blocker when the page is usable or retrying/inspecting state is straightforward.
 
 Obvious clicks, typing, scrolling, and already-clear browser sequences do not
-need an early handoff. Giving up early is good: ask the expert instead of
-repeating a weak strategy. The `request` should state only what is uncertain or
-what must be checked; the full conversation is inherited automatically.
+need an early handoff. The harness automatically runs one expert audit when you
+first try to finish, so do not call this tool merely for a final check.
+
+The `request` must name only the immediate blocker or decision. Never ask the
+expert to complete the remaining task, extraction, or artifact; the expert will
+make the smallest sufficient intervention and return control. The full
+conversation is inherited automatically.

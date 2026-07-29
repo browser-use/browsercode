@@ -59,12 +59,15 @@ export const AskExpertTool = Tool.define(
           const ops = ctx.extra?.promptOps as TaskPromptOps
           if (!ops) return yield* Effect.fail(new Error("AskExpertTool requires promptOps in ctx.extra"))
 
+          const finalAudit = args.request.startsWith("Finalization gate:")
           const parts = yield* ops.resolvePromptParts(
             [
               "You are the expert continuation of the agent whose complete context you inherited.",
-              "You share its exact live browser session and workspace. Inspect before acting, then resolve the current uncertainty or finish the missing work yourself; do not merely give advice when you can act.",
+              "You share its exact live browser session and workspace. Inspect before acting; do not merely give advice when a direct intervention is needed.",
               "The CDP session is already connected and preserves the parent's active target. Check session.isConnected() and do not reconnect when it is true.",
-              "Audit every original requirement, requested source, record identity, field, coverage claim, calculation, artifact, and evidence before handing back.",
+              finalAudit
+                ? "This is the finalization audit. Check every original requirement, requested source, record identity, field, coverage claim, calculation, artifact, and evidence. Repair missing or incorrect work yourself before handing back."
+                : "This is a mid-task handoff. Make the smallest sufficient intervention that unblocks the primary agent, leave the browser in a clear resumable state, and hand back immediately. Do not complete the remaining task, extraction, or artifact even if the request is phrased too broadly.",
               "Do not call ask_expert. Stop as soon as the issue is genuinely resolved or you have a concrete external blocker.",
               "End with a compact handback receipt containing: status (resolved or blocked), what you changed, evidence/artifacts, and any remaining issue.",
               "",

@@ -20,18 +20,6 @@ export const enabled = () =>
       (process.env.BU_CDP_WS ?? process.env.BU_CDP_URL),
   )
 
-export const routingPolicy = [
-  "<browser_delegation>",
-  "Browser Use is a cheap executor for a whole closed browser episode; BrowserCode owns planning, hard research, recovery, and the final answer.",
-  "Delegate before starting an episode when its start URL is known, it is mostly visible click/type/scroll/read work on one site, its finish and return fields are exactly observable, and you expect about 20 or fewer model steps.",
-  "Good episodes include completing a form or rate quote, applying filters and returning a bounded set of rows, or visiting a known finite list of pages. Delegate the whole episode, not one click from it.",
-  "Keep source discovery and judgment, ambiguous or open-ended research, unknown-size exhaustive collection, CDP/JavaScript/API reverse engineering, filesystem work, and access/authentication recovery in BrowserCode.",
-  "Give the leaf every known value and required return field. Make done_when name the exact visible evidence and payload required; each field for each record must be directly observed, never inferred from a collection title or neighboring record.",
-  "Use observed_state_after, its attached screenshot, action_details, and extracted_content as browser-observed postcondition evidence. Do not load browser_execute merely to repeat a successful low-risk state or screenshot check; use it only when evidence is missing, contradictory, or the action is high-stakes.",
-  "If the leaf gives up, take over and do not delegate another episode on the same tab.",
-  "</browser_delegation>",
-].join("\n")
-
 export const parameters = Schema.Struct({
   task: Schema.String.annotate({
     description:

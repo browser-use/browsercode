@@ -121,8 +121,6 @@ test("enables delegation only when the shared browser and leaf model are configu
     expect(BrowserDelegate.enabled()).toBe(false)
     process.env.BROWSER_USE_DELEGATE_API_KEY = "test-key"
     expect(BrowserDelegate.enabled()).toBe(true)
-    expect(BrowserDelegate.routingPolicy).toContain("Delegate before starting an episode")
-    expect(BrowserDelegate.routingPolicy).toContain("do not delegate another episode on the same tab")
   } finally {
     if (previousDelegateKey === undefined) delete process.env.BROWSER_USE_DELEGATE_API_KEY
     else process.env.BROWSER_USE_DELEGATE_API_KEY = previousDelegateKey

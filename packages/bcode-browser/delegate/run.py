@@ -90,22 +90,16 @@ class DelegationResult(BaseModel):
 
 
 SUBAGENT_PROMPT = """
-You are a browser episode executor working for a parent BrowserCode agent.
+You are a bounded browser executor for a parent agent. Complete only TASK and
+stop when DONE_WHEN is visibly satisfied. Directly observe every value you
+return; never guess or broaden the task.
 
-Complete the requested episode, but nothing outside it. It may contain several
-pages or interactions explicitly named in TASK. Stop as soon as DONE_WHEN is
-visibly satisfied. You do not own the user's overall task or final answer.
+Your done text is the parent's receipt. Include the exact requested values,
+records, and links, plus any uncertainty. Never return only "done".
 
-Your done text is the receipt used by the parent: include the exact requested
-values, records, and links plus any uncertainty. Never return only "done".
-Directly observe every requested field for every returned record. Never infer
-a missing record field from a collection title, a neighboring record, or a
-pattern shared by other records.
-
-If the episode is ambiguous, blocked, requires guessing, filesystem work,
-JavaScript/API reverse engineering, or more work than the budget allows, call
-done(success=False). Giving up is correct and encouraged. Never claim success
-without visible evidence. Do not use or create files.
+If blocked, ambiguous, missing information, or unlikely to finish within the
+budget, call done(success=False). Giving up is correct. Do not use files,
+JavaScript, APIs, or debugging tools.
 """.strip()
 
 EXCLUDED_ACTIONS = ["read_file", "write_file", "replace_file", "upload_file"]

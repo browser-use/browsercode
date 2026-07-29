@@ -1,23 +1,13 @@
-Delegate one complete, closed browser episode to a cheap Browser Use executor.
+Runs a cheap Browser Use subagent on the current CDP tab. It repeatedly sees a
+compact page state—URL, visible text, numbered interactive elements, and a
+screenshot when needed—and emits up to three click/type/scroll/read actions.
 
-Use it before starting the episode when the start URL is known, the work is
-mostly visible click/type/scroll/read interaction on one site, the finish and
-return fields are exactly observable, and about 20 or fewer model steps should
-be enough. Good episodes include a complete form or rate quote, applying
-filters and returning a bounded set of rows, or visiting a known finite list
-of pages. Delegate the whole episode, not one click from it.
+Delegate one complete episode when its start is known, its result is visible,
+and it should finish within 25 steps: for example a form, filters plus bounded
+results, or a known finite list. Keep open research, completeness or source
+judgment, debugging/CDP/API work, files, and authentication recovery here.
 
-Keep source discovery and judgment, ambiguous or open-ended research,
-unknown-size exhaustive collection, CDP/JavaScript/API reverse engineering,
-filesystem work, and access/authentication recovery in BrowserCode.
-
-Give the leaf all known values and required return fields. `done_when` must
-name both the visible final evidence and the exact payload it must return.
-Every field for every record must be directly observed, never inferred from a
-collection title or neighboring record.
-The receipt contains browser-observed final state, its post-action screenshot,
-parameterized actions, and extracted content. Use that evidence directly. Do
-not load browser_execute merely to repeat a successful low-risk state or
-screenshot check; call it only when evidence is missing, contradictory, or
-the action is high-stakes. If the leaf gives up, take over and do not delegate
-again on the same tab.
+Put every known input in `task`. Make `done_when` name the exact visible state
+and values to return; the subagent must observe rather than infer them. It may
+give up. On success, use its returned actions, values, final state, and attached
+screenshot directly. On failure, take over and do not delegate this tab again.

@@ -50,7 +50,7 @@ afterEach(async () => {
   await disposeAllInstances()
 })
 
-function stubOps(templates: string[]): TaskPromptOps {
+function stubOps(templates: string[], sessions: Session.Interface): TaskPromptOps {
   return {
     cancel: () => Effect.void,
     resolvePromptParts: (template) =>
@@ -58,7 +58,13 @@ function stubOps(templates: string[]): TaskPromptOps {
         templates.push(template)
         return [{ type: "text" as const, text: template }]
       }),
-    prompt: (input) => Effect.succeed(reply(input, "status: resolved\nchanged: fixed the immediate issue")),
+    prompt: (input) =>
+      Effect.gen(function* () {
+        const response = reply(input, "status: resolved\nchanged: fixed the immediate issue")
+        yield* sessions.updateMessage(response.info)
+        yield* Effect.forEach(response.parts, (part) => sessions.updatePart(part), { discard: true })
+        return response
+      }),
   }
 }
 
@@ -72,9 +78,9 @@ function reply(input: SessionPrompt.PromptInput, text: string): SessionV1.WithPa
       sessionID: input.sessionID,
       mode: input.agent ?? "build",
       agent: input.agent ?? "build",
-      cost: 0,
+      cost: 2.5,
       path: { cwd: "/tmp", root: "/tmp" },
-      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      tokens: { input: 100, output: 20, reasoning: 3, cache: { read: 75, write: 4 } },
       modelID: input.model?.modelID ?? ref.modelID,
       providerID: input.model?.providerID ?? ref.providerID,
       time: { created: Date.now() },
@@ -144,7 +150,7 @@ describe("tool.ask_expert", () => {
         messageID: assistant.id,
         agent: "build",
         abort: new AbortController().signal,
-        extra: { promptOps: stubOps(templates) },
+        extra: { promptOps: stubOps(templates, sessions) },
         messages: [],
         metadata: () => Effect.void,
         ask: () => Effect.void,
@@ -165,8 +171,19 @@ describe("tool.ask_expert", () => {
       })
       expect(first.metadata.expertSessionId).toBe(child.id)
       expect(first.metadata.reused).toBe(false)
+      expect(first.metadata.expertUsage).toEqual({
+        costUsd: 2.5,
+        modelCalls: 1,
+        totalTokens: 123,
+        inputTokens: 100,
+        outputTokens: 20,
+        reasoningTokens: 3,
+        cacheReadTokens: 75,
+        cacheWriteTokens: 4,
+      })
       expect(second.metadata.expertSessionId).toBe(child.id)
       expect(second.metadata.reused).toBe(true)
+      expect(second.metadata.expertUsage).toEqual(first.metadata.expertUsage)
       expect(SessionStore.get(chat.id)).toBe(SessionStore.get(child.id))
       expect(templates[0]).toContain("<original_requirements>")
       expect(templates[0]).toContain("Collect all matching records and save them.")

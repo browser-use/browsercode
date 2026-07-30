@@ -67,11 +67,11 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Building tag=${TAG} version=${VERSION}"
 
-      - name: Verify tag is reachable from main
-        # Releases must be cut from `main`. Tagging a feature branch (e.g. when
-        # a stacked PR has merged into a parent feature branch but not yet into
-        # `main`) silently produces a release whose contents diverge from the
-        # canonical history. Precedent: v0.0.8/v0.0.9 were tagged from
+      - name: Verify tag is reachable from an approved release branch
+        # Stable releases must be cut from `main`. A narrowly named
+        # `vX.Y.Z-hotfixN` prerelease may instead come from its matching
+        # `release/vX.Y.Z` maintenance branch. Other feature-branch tags fail
+        # before binaries are uploaded. Precedent: v0.0.8/v0.0.9 were tagged from
         # feat/embed-lmnr-key after PR #33 merged into the feature branch
         # (not into main); main moved on without it and the bcode-laminar
         # package had to be re-landed in PR #39. This guard fails the release
@@ -85,15 +85,23 @@ jobs:
         env:
           TAG: ${{ steps.ver.outputs.tag }}
         run: |
-          git fetch origin main --depth=1
+          git fetch origin main "refs/heads/release/*:refs/remotes/origin/release/*"
           TAG_SHA=$(git rev-parse -q --verify "refs/tags/${TAG}^{commit}") || {
-            echo "::error::Tag ${TAG} does not exist locally. Create the tag on a main commit first (e.g. \`gh release create ${TAG} --target main\`), then re-run."
+            echo "::error::Tag ${TAG} does not exist locally. Create it on main or the matching release/vX.Y.Z maintenance branch, then re-run."
             exit 1
           }
-          if ! git merge-base --is-ancestor "$TAG_SHA" origin/main; then
-            echo "::error::Tag ${TAG} points at $TAG_SHA which is not reachable from origin/main. Release tags must be cut from main."
-            exit 1
+          if git merge-base --is-ancestor "$TAG_SHA" origin/main; then
+            exit 0
           fi
+          if [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-hotfix[0-9]+$ ]]; then
+            RELEASE_REF="origin/release/v${BASH_REMATCH[1]}"
+            if git show-ref --verify --quiet "refs/remotes/${RELEASE_REF}" &&
+              git merge-base --is-ancestor "$TAG_SHA" "$RELEASE_REF"; then
+              exit 0
+            fi
+          fi
+          echo "::error::Tag ${TAG} points at $TAG_SHA outside main or its matching release/vX.Y.Z maintenance branch."
+          exit 1
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun

@@ -1,6 +1,7 @@
-Forks the complete current conversation to a stronger BrowserCode model. The
-expert shares the exact live CDP session and workspace, can act in the browser,
-and returns control here with a compact receipt and fresh browser state.
+Starts or resumes one stronger BrowserCode subagent. The expert receives the
+original requirements, current browser state, recent failures, and current
+draft instead of a copied transcript. It shares the exact live CDP session and
+workspace, can act directly, and returns a compact receipt with fresh state.
 
 Use it only when you cannot reliably continue after inspecting fresh state and
 trying the obvious recovery: the required strategy remains unclear, an
@@ -14,5 +15,5 @@ first try to finish, so do not call this tool merely for a final check.
 
 The `request` must name only the immediate blocker or decision. Never ask the
 expert to complete the remaining task, extraction, or artifact; the expert will
-make the smallest sufficient intervention and return control. The full
-conversation is inherited automatically.
+make the smallest sufficient intervention and return control. Later calls
+resume the same expert session.

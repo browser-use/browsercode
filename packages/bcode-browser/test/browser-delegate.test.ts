@@ -32,6 +32,14 @@ Path(args.result).write_text(json.dumps({
     "schema_version": 1,
     "delegation_id": request["delegation_id"],
     "status": "completed",
+    "episode_type": request["episode_type"],
+    "lease": {
+        "execution_mode": request["execution_mode"],
+        "allow_irreversible_actions": request["allow_irreversible_actions"],
+        "parent_target_id": request["target_id"],
+        "execution_target_id": request["target_id"],
+        "state_disposition": "shared",
+    },
     "done_when": request["done_when"],
     "summary": "Reached the requested page.",
     "result_artifact": "final_result.txt",
@@ -110,6 +118,7 @@ test("persists a compact delegation receipt and top-level index", async () => {
   const result = await Effect.runPromise(
     BrowserDelegate.execute(
       {
+        episode_type: "form",
         task: "Enter the postcode and search.",
         done_when: "Result cards are visible.",
       },
@@ -138,6 +147,9 @@ test("persists a compact delegation receipt and top-level index", async () => {
     parent_session_id: "session_test",
     target_id: "target_test",
     original_task: "Find the displayed shipping price for this route.",
+    execution_mode: "shared",
+    episode_type: "form",
+    allow_irreversible_actions: false,
     limits: { max_steps: 15, max_actions_per_step: 3, timeout_seconds: 120 },
   })
   expect(JSON.parse(await fs.readFile(path.join(directory, "delegations.json"), "utf8"))).toEqual([
@@ -165,12 +177,36 @@ test("enables delegation only when the shared browser and leaf model are configu
   }
 })
 
+test("rejects work outside the browser executor capability boundary", async () => {
+  await expect(
+    Effect.runPromise(
+      BrowserDelegate.execute(
+        {
+          episode_type: "visible_extraction",
+          task: "Open the linked PDF and read chapter two.",
+          done_when: "Return the chapter title.",
+        },
+        {
+          delegationID: "call_pdf",
+          parentSessionID: "session_test",
+          targetID: "target_test",
+          artifactRoot: path.join(directory, "rejected-delegations"),
+          indexPath: path.join(directory, "rejected-index.json"),
+          apiKey: "test-key",
+          originalTask: "Find the chapter title.",
+        },
+      ),
+    ),
+  ).rejects.toThrow("does not support PDF work")
+})
+
 test("recovers checkpoint evidence when the child misses its process deadline", async () => {
   process.env.BROWSER_USE_DELEGATE_RUNNER = slowRunner
   try {
     const result = await Effect.runPromise(
       BrowserDelegate.execute(
         {
+          episode_type: "navigation",
           task: "Complete a browser workflow.",
           done_when: "The result page is visible.",
         },
@@ -182,13 +218,13 @@ test("recovers checkpoint evidence when the child misses its process deadline", 
           indexPath: path.join(directory, "timeout-index.json"),
           apiKey: "test-key",
           originalTask: "Complete the workflow.",
-          processTimeoutMs: 50,
+          processTimeoutMs: 200,
         },
       ),
     )
 
     expect(result.status).toBe("timed_out")
-    expect(result.metrics).toMatchObject({ duration_seconds: 0.05, steps: 2, actions: 3 })
+    expect(result.metrics).toMatchObject({ duration_seconds: 0.2, steps: 2, actions: 3 })
     expect(result.initial_url).toBe("https://example.com/start")
     expect(result.final_url).toBe("https://example.com/two")
     expect(result.action_digest).toEqual(["click", "input_text, click"])
@@ -199,39 +235,36 @@ test("recovers checkpoint evidence when the child misses its process deadline", 
   }
 })
 
-test("allows a newly planned delegation after a failed episode on the same tab", async () => {
+test("opens the circuit breaker after a failed episode", async () => {
   const indexPath = path.join(directory, "blocked-delegations.json")
   await fs.writeFile(
     indexPath,
     JSON.stringify([{ delegation_id: "prior", target_id: "target_blocked", status: "gave_up", steps: 3 }]),
   )
 
-  const result = await Effect.runPromise(
-    BrowserDelegate.execute(
-      {
-        task: "Complete a newly planned browser portion from the current state.",
-        done_when: "The newly planned portion is complete.",
-      },
-      {
-        delegationID: "call_replanned",
-        parentSessionID: "session_test",
-        targetID: "target_blocked",
-        artifactRoot: path.join(directory, "blocked-delegations"),
-        indexPath,
-        apiKey: "test-key",
-        originalTask: "Complete the broader workflow.",
-      },
+  await expect(
+    Effect.runPromise(
+      BrowserDelegate.execute(
+        {
+          episode_type: "navigation",
+          task: "Complete a newly planned browser portion from the current state.",
+          done_when: "The newly planned portion is complete.",
+        },
+        {
+          delegationID: "call_replanned",
+          parentSessionID: "session_test",
+          targetID: "target_blocked",
+          artifactRoot: path.join(directory, "blocked-delegations"),
+          indexPath,
+          apiKey: "test-key",
+          originalTask: "Complete the broader workflow.",
+        },
+      ),
     ),
-  )
-
-  expect(result.status).toBe("completed")
-  expect(JSON.parse(await fs.readFile(indexPath, "utf8"))).toEqual([
-    expect.objectContaining({ delegation_id: "prior", status: "gave_up" }),
-    expect.objectContaining({ delegation_id: "call_replanned", status: "completed" }),
-  ])
+  ).rejects.toThrow("BrowserCode must own the remaining work")
 })
 
-test("caps total delegation episodes across a task", async () => {
+test("allows additional successful episodes within the total step budget", async () => {
   const indexPath = path.join(directory, "budgeted-delegations.json")
   await fs.writeFile(
     indexPath,
@@ -245,25 +278,30 @@ test("caps total delegation episodes across a task", async () => {
     ),
   )
 
-  await expect(
-    Effect.runPromise(
-      BrowserDelegate.execute(
-        {
-          task: "Run a fifth browser episode.",
-          done_when: "The fifth episode is complete.",
-        },
-        {
-          delegationID: "call_over_budget",
-          parentSessionID: "session_test",
-          targetID: "target-new",
-          artifactRoot: path.join(directory, "budgeted-delegations"),
-          indexPath,
-          apiKey: "test-key",
-          originalTask: "Complete a broad multi-part workflow.",
-        },
-      ),
+  await Effect.runPromise(
+    BrowserDelegate.execute(
+      {
+        episode_type: "visible_extraction",
+        task: "Run a fifth browser episode.",
+        done_when: "The fifth episode is complete.",
+      },
+      {
+        delegationID: "call_over_budget",
+        parentSessionID: "session_test",
+        targetID: "target-new",
+        artifactRoot: path.join(directory, "budgeted-delegations"),
+        indexPath,
+        apiKey: "test-key",
+        originalTask: "Complete a broad multi-part workflow.",
+      },
     ),
-  ).rejects.toThrow("4-episode task budget")
+  )
+
+  expect(
+    JSON.parse(
+      await fs.readFile(path.join(directory, "budgeted-delegations", "call_over_budget", "request.json"), "utf8"),
+    ),
+  ).toMatchObject({ limits: { max_steps: 15 } })
 })
 
 test("uses only the remaining child-step budget for the final episode", async () => {
@@ -283,6 +321,7 @@ test("uses only the remaining child-step budget for the final episode", async ()
   await Effect.runPromise(
     BrowserDelegate.execute(
       {
+        episode_type: "visible_extraction",
         task: "Use the remaining budget.",
         done_when: "The bounded episode is complete.",
       },

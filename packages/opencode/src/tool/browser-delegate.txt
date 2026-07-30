@@ -1,6 +1,7 @@
-Runs a fast, inexpensive Browser Use operator on the current CDP tab. It sees a
-compact page state—URL, visible text, numbered interactive elements, and a
-screenshot when needed—and chooses low-level click/type/scroll/read actions.
+Temporarily gives a fast, inexpensive Browser Use operator ownership of a
+bounded browser episode. It sees URL, visible text, numbered interactive
+elements, and a screenshot when needed, then chooses low-level
+click/type/scroll/read actions.
 
 Default to delegation for a coherent browser episode when its receipt can
 replace substantial browser work you would otherwise do yourself: multi-step
@@ -8,17 +9,24 @@ navigation, forms, filters, pagination, or bounded visible data collection. You
 may delegate multiple times as the task evolves. Do not delegate a lookup you
 can finish with one browser_execute call.
 
-Decide the strategy first. Keep unresolved research, source or record judgment,
-CDP/JavaScript/API/PDF/file work, authentication recovery, aggregation, and
-final synthesis with you. Never delegate work you expect to redo. After a
-give-up, resolve or materially change the blocked state before delegating a
-different, narrower browser episode; do not weaken the user's requirements.
+Use `shared` mode for forms, QA, authenticated applications, and other stateful
+work: the child operates on the exact live tab and returns it as-is. Use
+`isolated` only for read-only navigation or extraction that can start from the
+current URL: a successful tab is adopted, while a failed tab is discarded and
+the original state is restored. Keep unresolved research, source or record
+judgment, CDP/JavaScript/API/PDF/file work, authentication recovery,
+aggregation, and final synthesis with you.
+
+Never delegate work you expect to redo. A completed episode should normally
+form a two-call sandwich: this tool call, then one parent continuation that
+accepts its exact result. After any give-up, timeout, or failure, delegation is
+disabled for the remainder of the task and you must take over directly.
 
 The current user request is included automatically as read-only context, so
 `task` should describe only the delegated work. Make `done_when` name the exact
 observable outcome and values to return. It may give up, and a give-up ends only
-that delegated portion. A `claimed_complete` status is not proof: inspect the
-returned values, final state, and attached screenshot against `done_when`.
-Receipt evidence can be sufficient; do not replay successful work merely to
-verify it. For `gave_up` or `timed_out`, returned values and state are partial
-context, not task results, unless you independently complete or verify them.
+that delegated portion. A `claimed_complete` status is not proof, but an exact
+receipt that satisfies `done_when` is sufficient evidence: do not replay
+successful work merely to verify it. For `gave_up` or `timed_out`, returned
+values and state are partial context, not task results, unless you independently
+complete or verify them.

@@ -35,6 +35,16 @@ class DelegationRequest(BaseModel):
     parent_session_id: str = Field(min_length=1)
     target_id: str | None = None
     original_task: str
+    execution_mode: Literal["shared", "isolated"]
+    episode_type: Literal[
+        "navigation",
+        "form",
+        "filtering",
+        "pagination",
+        "visible_extraction",
+        "ui_test",
+    ]
+    allow_irreversible_actions: bool
     task: str = Field(min_length=1)
     done_when: str = Field(min_length=1)
     limits: DelegationLimits
@@ -70,10 +80,29 @@ class ObservedBrowserState(BaseModel):
     capture_error: str | None = None
 
 
+class DelegationLease(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    execution_mode: Literal["shared", "isolated"]
+    allow_irreversible_actions: bool
+    parent_target_id: str | None = None
+    execution_target_id: str | None = None
+    state_disposition: Literal["shared", "adopted", "restored"]
+
+
 class DelegationResult(BaseModel):
     schema_version: Literal[1] = 1
     delegation_id: str
     status: Literal["completed", "gave_up", "timed_out", "failed"]
+    episode_type: Literal[
+        "navigation",
+        "form",
+        "filtering",
+        "pagination",
+        "visible_extraction",
+        "ui_test",
+    ]
+    lease: DelegationLease
     done_when: str
     summary: str
     result_artifact: str | None = None
@@ -100,6 +129,16 @@ ORIGINAL_REQUEST is read-only context; complete only TASK, using any strategy
 and constraints the parent provided. Choose low-level browser interactions
 yourself, preserve every applicable constraint from ORIGINAL_REQUEST, and stop
 when DONE_WHEN is visibly satisfied.
+
+EXECUTION_MODE describes your browser lease. In shared mode, work only on the
+live state the parent handed you. In isolated mode, stay on the disposable tab
+you were given and never switch to a pre-existing tab. The parent will adopt an
+isolated tab only if you complete DONE_WHEN; otherwise it will discard it.
+
+If ALLOW_IRREVERSIBLE_ACTIONS is false, do not perform final actions that send,
+publish, purchase, delete, or irreversibly submit an application. You may use
+ordinary search, filtering, validation, and test-environment submissions. Stop
+at a review or ready-to-commit state when the final action is irreversible.
 
 Your done text is the parent's receipt. Include the exact requested values,
 records, and links, plus observed evidence for every DONE_WHEN requirement.
@@ -393,6 +432,8 @@ async def execute(request: DelegationRequest, directory: Path) -> DelegationResu
         auto_download_pdfs=False,
     )
     await browser.start()
+    initial_target_ids = {tab.target_id for tab in await browser.get_tabs()}
+    parent_target_id = request.target_id
     if request.target_id:
         target_session = await browser.get_or_create_cdp_session(
             request.target_id, focus=True
@@ -400,14 +441,31 @@ async def execute(request: DelegationRequest, directory: Path) -> DelegationResu
         await target_session.cdp_client.send.Target.activateTarget(
             params={"targetId": request.target_id}
         )
+    current_target = await browser.get_current_target_info()
+    parent_target_id = parent_target_id or (
+        current_target.get("targetId") if current_target else None
+    )
     initial_url = await browser.get_current_page_url()
     initial_title = await browser.get_current_page_title()
+    execution_target_id = parent_target_id
+    if request.execution_mode == "isolated":
+        page = await browser.new_page(initial_url)
+        target_info = await page.get_target_info()
+        execution_target_id = target_info["targetId"]
+        target_session = await browser.get_or_create_cdp_session(
+            execution_target_id, focus=True
+        )
+        await target_session.cdp_client.send.Target.activateTarget(
+            params={"targetId": execution_target_id}
+        )
     write_json(
         directory / "initial_state.json",
         {
             "schema_version": 1,
             "delegation_id": request.delegation_id,
-            "target_id": request.target_id,
+            "execution_mode": request.execution_mode,
+            "parent_target_id": parent_target_id,
+            "execution_target_id": execution_target_id,
             "url": initial_url,
             "title": initial_title,
             "captured_at": datetime.now(UTC).isoformat(),
@@ -423,6 +481,12 @@ TASK
 
 DONE_WHEN
 {request.done_when}
+
+EXECUTION_MODE
+{request.execution_mode}
+
+ALLOW_IRREVERSIBLE_ACTIONS
+{request.allow_irreversible_actions}
 """.strip()
 
     async def checkpoint(agent: Agent) -> None:
@@ -451,8 +515,12 @@ DONE_WHEN
         "session_id": request.parent_session_id,
         "input": {
             "delegation_id": request.delegation_id,
-            "target_id": request.target_id,
+            "parent_target_id": parent_target_id,
+            "execution_target_id": execution_target_id,
             "original_task": request.original_task,
+            "execution_mode": request.execution_mode,
+            "episode_type": request.episode_type,
+            "allow_irreversible_actions": request.allow_irreversible_actions,
             "task": request.task,
             "done_when": request.done_when,
             "limits": request.limits.model_dump(mode="json"),
@@ -468,6 +536,7 @@ DONE_WHEN
         span_options["parent_span_context"] = parent
 
     timed_out = False
+    run_error: str | None = None
     span_options["span_type"] = "LLM"
     with Laminar.start_as_current_span("browser_use.subagent", **span_options):
         agent = Agent(
@@ -498,6 +567,11 @@ DONE_WHEN
             agent.stop()
             history = agent.history
             history.usage = await agent.token_cost_service.get_usage_summary()
+        except Exception as error:  # noqa: BLE001 - preserve state and roll back
+            run_error = f"{type(error).__name__}: {error}"
+            agent.stop()
+            history = agent.history
+            history.usage = await agent.token_cost_service.get_usage_summary()
         history.save_to_file(history_path)
         usage = getattr(history, "usage", None)
         usage_data = usage.model_dump(mode="json") if usage is not None else {}
@@ -521,17 +595,64 @@ DONE_WHEN
             }
         )
 
-    observed_state = await observe_browser_state(browser, directory, request.target_id)
-    success = history.is_successful()
-    status: Literal["completed", "gave_up", "timed_out"] = (
-        "timed_out" if timed_out else "completed" if success is True else "gave_up"
+    observed_state = await observe_browser_state(
+        browser, directory, execution_target_id
     )
+    success = history.is_successful()
+    status: Literal["completed", "gave_up", "timed_out", "failed"] = (
+        "failed"
+        if run_error
+        else "timed_out"
+        if timed_out
+        else "completed"
+        if success is True
+        else "gave_up"
+    )
+    cleanup_errors: list[str] = []
+    state_disposition: Literal["shared", "adopted", "restored"] = (
+        "shared"
+        if request.execution_mode == "shared"
+        else "adopted"
+        if status == "completed"
+        else "restored"
+    )
+    if state_disposition == "restored":
+        for tab in await browser.get_tabs():
+            if tab.target_id in initial_target_ids:
+                continue
+            try:
+                await browser.close_page(tab.target_id)
+            except Exception as error:  # noqa: BLE001 - preserve rollback evidence
+                cleanup_errors.append(
+                    f"close isolated tab {tab.target_id}: "
+                    f"{type(error).__name__}: {error}"
+                )
+        if parent_target_id:
+            try:
+                parent_session = await browser.get_or_create_cdp_session(
+                    parent_target_id, focus=True
+                )
+                await parent_session.cdp_client.send.Target.activateTarget(
+                    params={"targetId": parent_target_id}
+                )
+            except Exception as error:  # noqa: BLE001 - return truthful disposition
+                cleanup_errors.append(
+                    f"restore parent tab {type(error).__name__}: {error}"
+                )
     final_result = (history.final_result() or "").strip() if history.is_done() else ""
     result_artifact = "final_result.txt" if final_result else None
     if result_artifact:
         (directory / result_artifact).write_text(final_result + "\n")
     if final_result:
         summary, result_truncated = compact_result(final_result)
+    elif run_error:
+        summary, _ = compact_result(
+            f"Browser Use failed before satisfying DONE_WHEN: {request.done_when}\n"
+            f"Failure: {run_error}\n"
+            f"Final observed page: {observed_state.title or '(untitled)'} "
+            f"({observed_state.url or 'unknown URL'})."
+        )
+        result_truncated = False
     elif timed_out:
         summary, _ = compact_result(
             "Browser Use reached the "
@@ -553,9 +674,13 @@ DONE_WHEN
             else "Browser Use gave up without a completion receipt."
         )
         result_truncated = False
-    errors = [str(error) for error in history.errors() if error]
+    errors = [
+        *([run_error] if run_error else []),
+        *[str(error) for error in history.errors() if error],
+        *cleanup_errors,
+    ]
     blocker = None
-    if success is not True or timed_out:
+    if status != "completed":
         blocker = (
             compact_result(final_result, 2000)[0]
             if final_result
@@ -569,6 +694,14 @@ DONE_WHEN
     result = DelegationResult(
         delegation_id=request.delegation_id,
         status=status,
+        episode_type=request.episode_type,
+        lease=DelegationLease(
+            execution_mode=request.execution_mode,
+            allow_irreversible_actions=request.allow_irreversible_actions,
+            parent_target_id=parent_target_id,
+            execution_target_id=execution_target_id,
+            state_disposition=state_disposition,
+        ),
         done_when=request.done_when,
         summary=summary,
         result_artifact=result_artifact,
@@ -583,9 +716,10 @@ DONE_WHEN
         final_url=observed_state.url or (urls[-1] if urls else ""),
         observed_state_after=observed_state,
         blocker=blocker,
-        uncertainties=(
-            [observed_state.capture_error] if observed_state.capture_error else []
-        ),
+        uncertainties=[
+            *([observed_state.capture_error] if observed_state.capture_error else []),
+            *cleanup_errors,
+        ],
         metrics=DelegationMetrics(
             duration_seconds=round(time.monotonic() - started, 3),
             steps=len(history),
@@ -612,7 +746,10 @@ DONE_WHEN
         trace_id=trace_id(context),
     )
     write_json(directory / "final_state.json", observed_state)
-    await browser.stop()
+    try:
+        await browser.stop()
+    except Exception as error:  # noqa: BLE001 - receipt and browser remain usable
+        result.uncertainties.append(f"browser stop {type(error).__name__}: {error}")
     return result
 
 
@@ -637,6 +774,16 @@ async def main() -> int:
         result = DelegationResult(
             delegation_id=request.delegation_id,
             status="failed",
+            episode_type=request.episode_type,
+            lease=DelegationLease(
+                execution_mode=request.execution_mode,
+                allow_irreversible_actions=request.allow_irreversible_actions,
+                parent_target_id=request.target_id,
+                execution_target_id=request.target_id,
+                state_disposition=(
+                    "shared" if request.execution_mode == "shared" else "restored"
+                ),
+            ),
             done_when=request.done_when,
             summary=f"{type(error).__name__}: {error}",
             blocker=f"{type(error).__name__}: {error}",

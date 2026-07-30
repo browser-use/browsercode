@@ -10,27 +10,28 @@ There is no helper namespace, just `session`, `console`, and standard JS globals
 Workspace: `<projectRoot>/.bcode/agent-workspace/`. Read/write your reusable scripts here.
 Skills: `{{SKILLS_DIR}}/`. Read-only browser execute reference docs.
 
-## Delegate browser work that replaces your work
+## Delegate a bounded ownership lease that replaces your work
 
 When `browser_delegate` is available, default to it for a coherent browser
 episode whose receipt lets you skip substantial browser work: multi-step
 navigation, forms, filters, pagination, or bounded visible data collection.
 Delegation is substantially cheaper and may happen multiple times as the task
 evolves. Do not delegate a lookup you can finish with one `browser_execute`
-call.
+call. Delegate the whole episode, not one click from it.
 
-Decide the strategy first. Keep unresolved research, source or record judgment,
-CDP/JavaScript/API/PDF/file work, authentication recovery, aggregation, and
-final synthesis here. Never delegate work you expect to redo. After a give-up,
-resolve or materially change the blocked state before delegating a different,
-narrower browser episode; do not weaken the user's requirements.
+Use `shared` mode for forms, QA, authenticated applications, and other stateful
+work on the exact live tab. Use `isolated` only for read-only navigation or
+extraction that can start from the current URL; success adopts the child tab,
+while failure restores the original tab. Keep unresolved research, source or
+record judgment, CDP/JavaScript/API/PDF/file work, authentication recovery,
+aggregation, irreversible final commits, and final synthesis here.
 
-A delegation receipt includes browser-observed final state, a post-action
-screenshot, action details, and extracted content. A `claimed_complete` receipt
-is not proof: inspect it against `done_when`. Receipt evidence can be
-sufficient; do not replay successful work merely to verify it. A give-up ends
-only that delegated portion. Its returned values and state are partial context,
-not task results, unless you independently complete or verify them.
+A completed episode should normally be a two-call sandwich: delegate, then
+accept its exact result in one continuation. Do not replay it. A compact receipt
+contains the exact result or blocker, browser disposition, and artifact path;
+full state, screenshots, and action history remain in the artifact directory
+and Laminar. After a give-up, timeout, or failure, Browser Use is disabled for
+the remainder of the task and you must take over directly.
 
 For an all-results or large extraction, write the canonical output artifact
 incrementally as data is collected. Auto-saved tool output and model context are

@@ -14,7 +14,6 @@ const MAX_ACTIONS_PER_STEP = 3
 const AGENT_TIMEOUT_SECONDS = 120
 const PROCESS_TIMEOUT_MS = 180_000
 const SHUTDOWN_GRACE_MS = 5_000
-const MAX_DELEGATIONS_PER_TASK = 4
 const MAX_DELEGATE_STEPS_PER_TASK = 45
 
 export const enabled = () =>
@@ -24,6 +23,25 @@ export const enabled = () =>
   )
 
 export const parameters = Schema.Struct({
+  execution_mode: Schema.optional(Schema.Literals(["shared", "isolated"])).annotate({
+    description:
+      "Use shared for forms, QA, authenticated apps, and other stateful work on the live tab. Use isolated only for read-only navigation or extraction that may be discarded on failure. Defaults to shared.",
+  }),
+  episode_type: Schema.Literals([
+    "navigation",
+    "form",
+    "filtering",
+    "pagination",
+    "visible_extraction",
+    "ui_test",
+  ]).annotate({
+    description:
+      "The browser-only capability this episode requires. Do not delegate PDF/file work, scripts/APIs, authentication recovery, source judgment, or final synthesis.",
+  }),
+  allow_irreversible_actions: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "Whether the executor may perform irreversible final actions such as sending, publishing, purchasing, deleting, or submitting an application. Defaults to false; ordinary search/filter/test submissions remain allowed.",
+  }),
   task: Schema.String.annotate({
     description: "One complete, bounded browser episode. Include its start URL and episode-specific inputs.",
   }),
@@ -39,6 +57,14 @@ const resultSchema = Schema.Struct({
   schema_version: Schema.Literal(1),
   delegation_id: Schema.String,
   status: Schema.Literals(["completed", "gave_up", "timed_out", "failed"]),
+  episode_type: Schema.Literals(["navigation", "form", "filtering", "pagination", "visible_extraction", "ui_test"]),
+  lease: Schema.Struct({
+    execution_mode: Schema.Literals(["shared", "isolated"]),
+    allow_irreversible_actions: Schema.Boolean,
+    parent_target_id: Schema.NullOr(Schema.String),
+    execution_target_id: Schema.NullOr(Schema.String),
+    state_disposition: Schema.Literals(["shared", "adopted", "restored"]),
+  }),
   done_when: Schema.String,
   summary: Schema.String,
   result_artifact: Schema.NullOr(Schema.String),
@@ -104,10 +130,16 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
       if (!ctx.apiKey) throw new Error("browser_delegate requires BROWSER_USE_DELEGATE_API_KEY")
       const cdpUrl = process.env.BU_CDP_WS ?? process.env.BU_CDP_URL
       if (!cdpUrl) throw new Error("browser_delegate requires BU_CDP_WS or BU_CDP_URL")
+      const unsupported = unsupportedDelegation(args)
+      if (unsupported) {
+        throw new Error(`${unsupported}; BrowserCode must perform this work directly`)
+      }
 
       const delegationID = ctx.delegationID.replaceAll(/[^a-zA-Z0-9._-]/g, "_")
       const processTimeoutMs = ctx.processTimeoutMs ?? PROCESS_TIMEOUT_MS
       const maxSteps = await availableDelegationSteps(ctx.indexPath)
+      const executionMode = args.execution_mode ?? "shared"
+      const allowIrreversibleActions = args.allow_irreversible_actions ?? false
       const directory = path.join(ctx.artifactRoot, delegationID)
       const requestPath = path.join(directory, "request.json")
       const resultPath = path.join(directory, "result.json")
@@ -127,6 +159,9 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
             parent_session_id: ctx.parentSessionID,
             target_id: ctx.targetID ?? null,
             original_task: ctx.originalTask,
+            execution_mode: executionMode,
+            episode_type: args.episode_type,
+            allow_irreversible_actions: allowIrreversibleActions,
             task: args.task,
             done_when: args.done_when,
             limits: {
@@ -196,6 +231,14 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
               schema_version: 1,
               delegation_id: delegationID,
               status: "timed_out",
+              episode_type: args.episode_type,
+              lease: {
+                execution_mode: executionMode,
+                allow_irreversible_actions: allowIrreversibleActions,
+                parent_target_id: ctx.targetID ?? null,
+                execution_target_id: executionMode === "shared" ? (ctx.targetID ?? null) : null,
+                state_disposition: executionMode === "shared" ? "shared" : "restored",
+              },
               done_when: args.done_when,
               summary: [
                 `Browser Use did not flush a receipt before the ${processTimeoutMs / 1000} second process deadline.`,
@@ -245,6 +288,7 @@ export const execute = (args: Parameters, ctx: ExecuteContext) =>
       await appendIndex(ctx.indexPath, {
         delegation_id: delegationID,
         target_id: result.observed_state_after?.target_id ?? ctx.targetID ?? null,
+        execution_mode: result.lease.execution_mode,
         task: args.task,
         done_when: args.done_when,
         status: result.status,
@@ -334,10 +378,12 @@ const availableDelegationSteps = async (indexPath: string) => {
   if (!(await file.exists())) return MAX_STEPS
   const current: unknown = await file.json()
   if (!Array.isArray(current)) throw new Error(`${indexPath} must contain a JSON array`)
-  if (current.length >= MAX_DELEGATIONS_PER_TASK) {
-    throw new Error(
-      `Browser Use reached the ${MAX_DELEGATIONS_PER_TASK}-episode task budget; BrowserCode must take over`,
-    )
+  const failed = current.find(
+    (entry) =>
+      isRecord(entry) && typeof entry.status === "string" && ["gave_up", "timed_out", "failed"].includes(entry.status),
+  )
+  if (failed) {
+    throw new Error("Browser Use already failed or gave up during this task; BrowserCode must own the remaining work")
   }
   const steps = current.reduce(
     (total, entry) =>
@@ -350,6 +396,25 @@ const availableDelegationSteps = async (indexPath: string) => {
     )
   }
   return Math.min(MAX_STEPS, MAX_DELEGATE_STEPS_PER_TASK - steps)
+}
+
+const unsupportedDelegation = (args: Parameters) => {
+  const request = `${args.task}\n${args.done_when}`
+  return [
+    { pattern: /\bPDFs?\b|\.pdf(?:\b|[?#])/i, reason: "Browser Use delegation does not support PDF work" },
+    {
+      pattern: /\b(?:JavaScript|CDP)\b|\bAPI(?:s)?\b/i,
+      reason: "Browser Use delegation does not support scripts or APIs",
+    },
+    {
+      pattern: /\bCAPTCHA\b|authentication recovery|recover authentication/i,
+      reason: "Browser Use delegation does not support CAPTCHA or authentication recovery",
+    },
+    {
+      pattern: /\b(?:upload|download|read|write|edit)(?:ing)? (?:a |the )?(?:local )?files?\b/i,
+      reason: "Browser Use delegation does not support file work",
+    },
+  ].find((entry) => entry.pattern.test(request))?.reason
 }
 
 const traceID = (context: string | undefined): string | null => {

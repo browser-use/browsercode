@@ -39,7 +39,7 @@ export const BrowserDelegateTool = Tool.define(
             model: process.env.BROWSER_USE_DELEGATE_MODEL,
           })
           const finalTargetID = result.observed_state_after?.target_id
-          if (finalTargetID) {
+          if (finalTargetID && result.lease.state_disposition !== "restored") {
             yield* Effect.promise(async () => {
               try {
                 const session = SessionStore.get(ctx.sessionID)
@@ -51,83 +51,56 @@ export const BrowserDelegateTool = Tool.define(
               }
             })
           }
-          const screenshotArtifact = result.observed_state_after?.screenshot_artifact
-          const screenshotPath =
-            screenshotArtifact && path.basename(screenshotArtifact) === screenshotArtifact
-              ? path.join(result.artifact_directory, screenshotArtifact)
-              : undefined
-          const screenshotFile = screenshotPath ? Bun.file(screenshotPath) : undefined
           const resultArtifact =
             result.result_artifact && path.basename(result.result_artifact) === result.result_artifact
               ? path.join(result.artifact_directory, result.result_artifact)
               : null
-          const finalState = result.observed_state_after
+          const attemptedState = result.observed_state_after
             ? {
                 url: result.observed_state_after.url,
                 title: result.observed_state_after.title,
-                page_excerpt: compactText(result.observed_state_after.page_excerpt),
-                page_excerpt_truncated:
-                  result.observed_state_after.page_excerpt_truncated ||
-                  result.observed_state_after.page_excerpt.length > 4_000,
-                screenshot_artifact: result.observed_state_after.screenshot_artifact,
-                capture_error: result.observed_state_after.capture_error,
+                page_excerpt:
+                  result.status === "completed"
+                    ? undefined
+                    : compactText(result.observed_state_after.page_excerpt, 1_200),
               }
             : null
-          const attachments =
-            screenshotFile && (yield* Effect.promise(() => screenshotFile.exists()))
-              ? [
-                  {
-                    type: "file" as const,
-                    mime: "image/png",
-                    url: `data:image/png;base64,${Buffer.from(
-                      yield* Effect.promise(() => screenshotFile.arrayBuffer()),
-                    ).toString("base64")}`,
-                  },
-                ]
-              : []
           const parentFacingStatus = result.status === "completed" ? "claimed_complete" : result.status
           const receiptGuidance =
             result.status === "completed"
-              ? "Inspect the receipt against done_when. Its browser-observed values, final state, and screenshot can be sufficient evidence; do not replay successful work unless that evidence is missing or contradictory."
-              : "DONE_WHEN was not satisfied. Treat observed_values and final_state only as partial context, never as task results, unless you independently complete or verify the missing requirements."
+              ? "DONE_WHEN was claimed complete. Treat this episode as finished when the exact result satisfies the contract; do not replay it."
+              : "DONE_WHEN was not satisfied. BrowserCode owns all remaining work, and Browser Use is disabled for the rest of this task."
           return {
             title: `browser_delegate: ${parentFacingStatus}`,
-            output: [
-              JSON.stringify(
-                {
-                  status: parentFacingStatus,
-                  completion_contract: {
-                    done_when: result.done_when,
-                    child_claimed_success: result.done_condition_claimed,
-                    verification: "inspect_receipt_evidence",
-                  },
-                  receipt_guidance: receiptGuidance,
-                  result: result.summary,
-                  result_truncated: result.result_truncated,
-                  full_result_artifact: resultArtifact,
-                  observed_values: result.extracted_content,
-                  actions: result.action_digest,
-                  action_evidence: result.status === "completed" ? [] : result.action_details,
-                  initial_state: {
-                    url: result.initial_url,
-                    title: result.initial_title,
-                  },
-                  final_state: finalState,
-                  unresolved: [result.blocker, ...result.uncertainties].filter((value): value is string =>
-                    Boolean(value),
-                  ),
-                  metrics: result.metrics,
-                  artifact_directory: result.artifact_directory,
+            output: JSON.stringify(
+              {
+                status: parentFacingStatus,
+                episode_type: result.episode_type,
+                completion_contract: {
+                  done_when: result.done_when,
+                  child_claimed_success: result.done_condition_claimed,
                 },
-                null,
-                2,
-              ),
-              attachments.length > 0 ? "(browser-observed post-action screenshot attached)" : "",
-            ]
-              .filter(Boolean)
-              .join("\n\n"),
+                receipt_guidance: receiptGuidance,
+                result: compactText(result.summary, 4_000),
+                browser_lease: {
+                  execution_mode: result.lease.execution_mode,
+                  state_disposition: result.lease.state_disposition,
+                  resumed_state:
+                    result.lease.state_disposition === "restored"
+                      ? { url: result.initial_url, title: result.initial_title }
+                      : attemptedState,
+                  attempted_state: attemptedState,
+                },
+                blocker: result.status === "completed" ? null : compactText(result.blocker ?? result.summary, 1_500),
+                full_result_artifact: resultArtifact,
+                artifact_directory: result.artifact_directory,
+                metrics: result.metrics,
+              },
+              null,
+              2,
+            ),
             metadata: result,
-            attachments,
+            attachments: [],
           }
         }).pipe(Effect.orDie),
     }
@@ -150,7 +123,12 @@ const currentUserRequest = (ctx: Tool.Context) => {
     .join("\n\n")
 }
 
-const compactText = (value: string) => {
-  if (value.length <= 4_000) return value
-  return value.slice(0, 1_965) + "\n\n... final state excerpt truncated ...\n\n" + value.slice(-1_965)
+const compactText = (value: string, limit: number) => {
+  if (value.length <= limit) return value
+  const half = Math.floor((limit - 70) / 2)
+  return (
+    value.slice(0, half) +
+    "\n\n... receipt content truncated; full value saved in artifacts ...\n\n" +
+    value.slice(-half)
+  )
 }

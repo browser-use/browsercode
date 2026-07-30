@@ -7,13 +7,7 @@
 
 import { type Context, ROOT_CONTEXT, type Span, trace, TraceFlags } from "@opentelemetry/api"
 
-import {
-  PARENT_SPAN_IDS_PATH,
-  PARENT_SPAN_PATH,
-  SESSION_ID,
-  SPAN_INPUT,
-  SPAN_TYPE,
-} from "./attributes"
+import { PARENT_SPAN_IDS_PATH, PARENT_SPAN_PATH, SESSION_ID, SPAN_INPUT, SPAN_TYPE } from "./attributes"
 import { isStringUUID, type StringUUID, uuidToOtelSpanId, uuidToOtelTraceId } from "./utils"
 
 const TURN_TRACER_NAME = "@browser-use/bcode-laminar"
@@ -21,6 +15,7 @@ const TURN_TRACER_NAME = "@browser-use/bcode-laminar"
 export const startTurnSpan = (opts: {
   name: string
   sessionId: string
+  parentSpan?: Span
   parentSpanContext?: string
   input?: unknown
 }): Span => {
@@ -28,7 +23,9 @@ export const startTurnSpan = (opts: {
   let parentPath: string[] | undefined
   let parentIdsPath: StringUUID[] | undefined
 
-  if (opts.parentSpanContext) {
+  if (opts.parentSpan) {
+    ctx = trace.setSpan(ctx, opts.parentSpan)
+  } else if (opts.parentSpanContext) {
     const parsed = parseLaminarSpanContext(opts.parentSpanContext)
     if (parsed) {
       parentPath = parsed.spanPath
@@ -76,9 +73,8 @@ const parseLaminarSpanContext = (input: string): ParsedSpanContext | undefined =
       : undefined
     const spanIdsPathRaw = record.spanIdsPath ?? record.span_ids_path
     const spanIdsPath =
-      Array.isArray(spanIdsPathRaw) &&
-      spanIdsPathRaw.every((v: unknown) => typeof v === "string" && isStringUUID(v))
-        ? (spanIdsPathRaw as StringUUID[])
+      Array.isArray(spanIdsPathRaw) && spanIdsPathRaw.every((v: unknown) => typeof v === "string" && isStringUUID(v))
+        ? spanIdsPathRaw
         : undefined
     return {
       traceId,

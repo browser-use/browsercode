@@ -17,7 +17,7 @@
 //  - `pino` logger — opencode plugins log via `client.app.log`; the plugin passes
 //    in a logger callback.
 
-import { type Context, type Span, trace } from "@opentelemetry/api"
+import { type Context, trace } from "@opentelemetry/api"
 import {
   BatchSpanProcessor,
   type ReadableSpan,
@@ -38,7 +38,7 @@ import { sessionCurrentTurnSpan } from "./state"
 import { otelSpanIdToUUID, type StringUUID } from "./utils"
 
 const SDK_VERSION = "bcode-laminar-0.1"
-const SPAWNING_TOOL_NAMES = ["task"]
+const SPAWNING_TOOL_NAMES = ["ask_expert", "task"]
 type LogFn = (level: "debug" | "info" | "warn" | "error", message: string) => void
 
 export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
@@ -70,9 +70,7 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
     // 1. Re-parent AI-SDK spans onto the live "turn" span for this opencode
     //    session, so each turn becomes its own Laminar trace instead of a
     //    forest of orphan traces.
-    const sessionId = span.attributes?.["ai.telemetry.metadata.sessionId"] as
-      | string
-      | undefined
+    const sessionId = span.attributes?.["ai.telemetry.metadata.sessionId"] as string | undefined
     let ctx = parentContext
     if (sessionId && typeof sessionId === "string") {
       const parentSpanContext = sessionCurrentTurnSpan[sessionId]?.spanContext()
@@ -95,9 +93,7 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
       const toolCallNameAttr = span.attributes?.["ai.toolCall.name"] as string | undefined
       if (
         SPAWNING_TOOL_NAMES.includes(span.name) ||
-        (span.name === "ai.toolCall" &&
-          toolCallNameAttr &&
-          SPAWNING_TOOL_NAMES.includes(toolCallNameAttr))
+        (span.name === "ai.toolCall" && toolCallNameAttr && SPAWNING_TOOL_NAMES.includes(toolCallNameAttr))
       ) {
         this.spawningSpanIdToToolUseId[otelSpanIdToUUID(span.spanContext().spanId)] = toolCallId
       }
@@ -106,16 +102,12 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
     // 3. Stamp Laminar's path attributes. The UI nests by these, NOT by
     //    OTel parentSpanId — must run for every span.
     const parentPathFromAttribute = span.attributes?.[PARENT_SPAN_PATH] as string[] | undefined
-    const parentIdsPathFromAttribute = span.attributes?.[PARENT_SPAN_IDS_PATH] as
-      | StringUUID[]
-      | undefined
+    const parentIdsPathFromAttribute = span.attributes?.[PARENT_SPAN_IDS_PATH] as StringUUID[] | undefined
     const parentSpanId = getParentSpanId(span)
     const parentSpanPath =
-      parentPathFromAttribute ??
-      (parentSpanId !== undefined ? this.spanIdToPath.get(parentSpanId) : undefined)
+      parentPathFromAttribute ?? (parentSpanId !== undefined ? this.spanIdToPath.get(parentSpanId) : undefined)
     const parentSpanIdsPath =
-      parentIdsPathFromAttribute ??
-      (parentSpanId !== undefined ? this.spanIdLists.get(parentSpanId) : [])
+      parentIdsPathFromAttribute ?? (parentSpanId !== undefined ? this.spanIdLists.get(parentSpanId) : [])
 
     const spanId = span.spanContext().spanId
     const spanPath = parentSpanPath ? [...parentSpanPath, span.name] : [span.name]
@@ -133,17 +125,17 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
     if (spanIdsPath.length > 0) {
       let spawningToolCallSpanId: StringUUID | undefined
       for (let i = spanIdsPath.length - 1; i >= 0; i--) {
-        const candidate = spanIdsPath[i]!
+        const candidate = spanIdsPath[i]
         if (this.spawningSpanIdToToolUseId[candidate] !== undefined) {
           spawningToolCallSpanId = candidate
           break
         }
       }
       if (spawningToolCallSpanId) {
+        const spawningToolUseId = this.spawningSpanIdToToolUseId[spawningToolCallSpanId]
         span.setAttributes({
           "lmnr.spawning_subagent.span_id": spawningToolCallSpanId,
-          "lmnr.spawning_subagent.tool_use_id":
-            this.spawningSpanIdToToolUseId[spawningToolCallSpanId]!,
+          "lmnr.spawning_subagent.tool_use_id": spawningToolUseId,
         })
       }
     }

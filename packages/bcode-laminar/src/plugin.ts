@@ -17,7 +17,7 @@ import { NodeSDK } from "@opentelemetry/sdk-node"
 import { createSpanExporter } from "./exporter"
 import { OpenCodeLaminarSpanProcessor } from "./processor"
 import { startTurnSpan } from "./span"
-import { sessionCurrentTurnSpan, subagentSessionIds } from "./state"
+import { parentSessionID, sessionCurrentTurnSpan, subagentSessionIds } from "./state"
 
 const DEFAULT_GRPC_PORT_LMNR = 8443
 const DEFAULT_GRPC_PORT_GENERIC = 443
@@ -37,8 +37,7 @@ export const LaminarPlugin: Plugin = ({ client }) => {
   // is sufficient to enable tracing.
   // `||` (not `??`) so an empty-string signal-specific override falls back
   // to the generic endpoint, matching OTel SDK convention (empty == unset).
-  const otlpEndpoint =
-    process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_ENDPOINT
+  const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_ENDPOINT
   const baseUrl = process.env.LMNR_BASE_URL ?? "https://api.lmnr.ai"
   const port = parsePort(
     process.env.LMNR_GRPC_PORT,
@@ -53,9 +52,7 @@ export const LaminarPlugin: Plugin = ({ client }) => {
   const parentSpanContext = process.env.LMNR_PARENT_SPAN_CONTEXT
 
   const log = (level: "debug" | "info" | "warn" | "error", message: string) => {
-    client.app
-      .log({ body: { service: "laminar", level, message } })
-      .catch(() => {})
+    client.app.log({ body: { service: "laminar", level, message } }).catch(() => {})
   }
 
   if (!projectApiKey && !otlpEndpoint) return Promise.resolve({})
@@ -87,7 +84,7 @@ export const LaminarPlugin: Plugin = ({ client }) => {
   return Promise.resolve({
     config: async (config) => {
       if (!config.experimental?.openTelemetry) {
-        config.experimental = { ...(config.experimental ?? {}), openTelemetry: true }
+        config.experimental = { ...config.experimental, openTelemetry: true }
       }
     },
     // End-of-process drain. The host calls this from its top-level finally
@@ -158,16 +155,15 @@ export const LaminarPlugin: Plugin = ({ client }) => {
     },
     "chat.message": async (input, output) => {
       const { sessionID, agent, model, messageID, variant } = input
-      // Skip sub-agent prompts — their parent already has a turn span.
-      const isSubagent = Object.values(subagentSessionIds).some((children) =>
-        children.has(sessionID),
-      )
-      if (isSubagent || sessionCurrentTurnSpan[sessionID]) return
+      if (sessionCurrentTurnSpan[sessionID]) return
+      const parentID = parentSessionID(sessionID)
+      const parentSpan = parentID ? sessionCurrentTurnSpan[parentID] : undefined
 
       const span = startTurnSpan({
-        name: "turn",
+        name: parentID ? "subagent" : "turn",
         sessionId: sessionID,
-        parentSpanContext,
+        parentSpan,
+        parentSpanContext: parentSpan ? undefined : parentSpanContext,
         input: {
           sessionID,
           agent,

@@ -2,9 +2,12 @@
 // Module-level maps shared by plugin.ts and processor.ts:
 // - sessionCurrentTurnSpan: session id -> live "turn" span the AI-SDK spans nest under.
 // - subagentSessionIds: parent session id -> set of child (sub-agent) session ids.
-//   Used to skip turn-span creation for sub-agent prompts.
+//   Used to parent each subagent span beneath the live parent turn.
 
 import type { Span } from "@opentelemetry/api"
 
 export const sessionCurrentTurnSpan: Record<string, Span> = {}
 export const subagentSessionIds: Record<string, Set<string>> = {}
+
+export const parentSessionID = (sessionID: string): string | undefined =>
+  Object.entries(subagentSessionIds).find(([, children]) => children.has(sessionID))?.[0]

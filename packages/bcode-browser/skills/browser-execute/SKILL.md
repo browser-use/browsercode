@@ -168,6 +168,9 @@ try {
 ```
 
 ## Reusing code
+Only `session` persists between `browser_execute` calls; variables and functions declared in a snippet do not.
+Put reusable code in workspace files and import it from each snippet that needs it.
+
 The agent-workspace is per-project: `./.bcode/agent-workspace/`. 
 Use this to write memory files, scripts, and helper functions.
 Imports work at any depth; pick whatever layout makes the project easiest to navigate.

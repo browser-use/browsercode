@@ -112,6 +112,7 @@ Every explicit reconnect or browser switch retires the previous socket and clear
 
 ## Driving a page
 Domain methods follow `session.<Domain>.<method>(params)` and return Promises. 
+Page globals such as `document`, `window`, and `location` are available inside `session.Runtime.evaluate(...)`, not in the surrounding `browser_execute` snippet.
 The full surface (652 commands) is the Chrome DevTools Protocol.
 `Object.keys(session.domains).sort()` lists every CDP domain bound on the session; `Object.keys(session.Page).sort()` lists the methods for `Page`. 
 For unknown param shapes, call with `{}` and inspect the thrown `CdpError` — `.data` carries the missing-field detail.

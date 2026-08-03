@@ -97,6 +97,8 @@ interface ProcessorContext extends Input {
   currentText: SessionV1.TextPart | undefined
   reasoningMap: Record<string, SessionV1.ReasoningPart>
   outputLimitUsage: Pick<SessionV1.StepFinishPart, "cost" | "tokens"> | undefined
+  emittedText: boolean
+  emittedTool: boolean
 }
 
 type StreamEvent = LLMEvent
@@ -137,14 +139,18 @@ const layer = Layer.effect(
         currentText: undefined,
         reasoningMap: {},
         outputLimitUsage: undefined,
+        emittedText: false,
+        emittedTool: false,
       }
       let aborted = false
 
       const parse = (e: unknown) =>
-        MessageV2.fromError(e, {
-          providerID: input.model.providerID,
-          aborted,
-        })
+        SessionV1.APIError.isInstance(e)
+          ? e.toObject()
+          : MessageV2.fromError(e, {
+              providerID: input.model.providerID,
+              aborted,
+            })
 
       const settleToolCall = Effect.fn("SessionProcessor.settleToolCall")(function* (toolCallID: string) {
         const done = ctx.toolcalls[toolCallID]?.done
@@ -378,6 +384,7 @@ const layer = Layer.effect(
             if (ctx.assistantMessage.summary) {
               throw new Error(`Tool call not allowed while generating summary: ${value.name}`)
             }
+            ctx.emittedTool = true
             yield* ensureToolCall(value)
             const input = isRecord(value.input) ? value.input : { value: value.input }
             yield* updateToolCall(value.id, (match) => ({
@@ -567,6 +574,7 @@ const layer = Layer.effect(
           case "text-delta":
             if (!ctx.currentText) return
             ctx.currentText.text += value.text
+            ctx.emittedText ||= value.text.trim().length > 0
             if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
             yield* session.updatePartDelta({
               sessionID: ctx.currentText.sessionID,
@@ -596,6 +604,7 @@ const layer = Layer.effect(
             }
             if (value.providerMetadata) ctx.currentText.metadata = value.providerMetadata
             yield* session.updatePart(ctx.currentText)
+            ctx.emittedText ||= ctx.currentText.text.trim().length > 0
             ctx.currentText = undefined
             return
 
@@ -704,11 +713,14 @@ const layer = Layer.effect(
         })
         ctx.needsCompaction = false
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
+        let emptyResponses = 0
 
         return yield* Effect.gen(function* () {
           yield* Effect.gen(function* () {
             ctx.currentText = undefined
             ctx.reasoningMap = {}
+            ctx.emittedText = false
+            ctx.emittedTool = false
             yield* status.set(ctx.sessionID, { type: "busy" })
             const stream = llm.stream(streamInput)
 
@@ -717,6 +729,19 @@ const layer = Layer.effect(
               Stream.takeUntil(() => ctx.needsCompaction),
               Stream.runDrain,
             )
+
+            const empty =
+              !ctx.needsCompaction &&
+              streamInput.toolChoice !== "required" &&
+              (ctx.assistantMessage.finish === "stop" || ctx.assistantMessage.finish === "unknown") &&
+              !ctx.emittedText &&
+              !ctx.emittedTool
+            if (!empty) return
+            emptyResponses++
+            throw new SessionV1.APIError({
+              message: "Model returned reasoning without an answer or tool call",
+              isRetryable: emptyResponses === 1,
+            })
           }).pipe(
             Effect.onInterrupt(() =>
               Effect.gen(function* () {

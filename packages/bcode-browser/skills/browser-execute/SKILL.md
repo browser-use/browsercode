@@ -110,6 +110,8 @@ If a target-scoped command throws `CdpError` code `-32001` (`Session with given 
 
 Every explicit reconnect or browser switch retires the previous socket and clears its active target attachment. Re-list targets, call `session.use(...)`, and rediscover DOM nodes and Runtime objects before continuing.
 
+Opening a tab creates a new `page` target but does not switch the active attachment. Call `Target.getTargets` again and `session.use(targetId)` when continuing there.
+
 ## Driving a page
 Domain methods follow `session.<Domain>.<method>(params)` and return Promises. 
 The full surface (652 commands) is the Chrome DevTools Protocol.
@@ -200,7 +202,7 @@ console.log(JSON.stringify(titles))
 ## Guardrails
 - Top-level `import` statements inside the snippet body are not allowed. Use `await import(...)` instead.
 - No CPU-bound infinite loops without `await` — they ignore the timeout. Insert `await new Promise(r => setTimeout(r, 0))` to yield.
-- `browser_execute` defaults to 60s (max 600s). For longer work, set the tool's top-level `timeout`; inner CDP timeouts do not extend it. Keep batches small and log progress — timeout errors return recent logs, and a timeout resets the CDP session. Reconnect deliberately after a timeout so a run that switched browsers cannot silently return to its original browser.
+- `browser_execute` defaults to 60s; longer timeouts delay your next turn. After a timeout, only that call loses CDP access; the next call can continue on the same connection and target. The last command sent by the timed-out call may still finish. `Target.getTargets` succeeding means CDP is live; `session.connect()` is then a no-op, and reattaching the same target does not restart its renderer.
 
 ## Console
 - `console.log`, `console.error`, `console.warn`, `console.info`, `console.debug` are all captured and streamed to the user. Treat them as your stdout. Other `console.*` methods write to bcode's stderr without being captured into the tool result.

@@ -202,7 +202,7 @@ console.log(JSON.stringify(titles))
 ## Guardrails
 - Top-level `import` statements inside the snippet body are not allowed. Use `await import(...)` instead.
 - No CPU-bound infinite loops without `await` — they ignore the timeout. Insert `await new Promise(r => setTimeout(r, 0))` to yield.
-- `browser_execute` defaults to 60s; longer timeouts delay your next turn. A timeout does not close CDP, though its last command may still run. `Target.getTargets` succeeding means CDP is live; `session.connect()` is then a no-op, and reattaching the same target does not restart its renderer.
+- `browser_execute` defaults to 60s; longer timeouts delay your next turn. A timeout ends that call's CDP access without closing the connection, though its last command may still run. `Target.getTargets` succeeding means CDP is live; `session.connect()` is then a no-op, and reattaching the same target does not restart its renderer.
 
 ## Console
 - `console.log`, `console.error`, `console.warn`, `console.info`, `console.debug` are all captured and streamed to the user. Treat them as your stdout. Other `console.*` methods write to bcode's stderr without being captured into the tool result.

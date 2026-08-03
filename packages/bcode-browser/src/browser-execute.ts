@@ -262,7 +262,7 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
             const output = timeoutOutput(captured.output)
             const error = new Error(
               [
-                `browser_execute timed out after ${timeout} ms; the timeout did not close the CDP session`,
+                `browser_execute timed out after ${timeout} ms; this invocation can no longer issue CDP commands, but the timeout did not close the CDP session`,
                 output.trim() ? `Partial console output before timeout:\n${output.trimEnd()}` : "",
               ]
                 .filter(Boolean)

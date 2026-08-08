@@ -399,6 +399,12 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
     expect(result.include).toEqual(["reasoning.encrypted_content"])
   })
 
+  test("gpt-5.5 should have textVerbosity set to medium", () => {
+    const model = createGpt5Model("gpt-5.5")
+    const result = ProviderTransform.options({ model, sessionID, providerOptions: {} })
+    expect(result.textVerbosity).toBe("medium")
+  })
+
   test("Bedrock Mantle gpt-5.5 uses OpenAI Responses defaults", () => {
     const model = {
       ...createGpt5Model("openai.gpt-5.5"),
@@ -415,7 +421,7 @@ describe("ProviderTransform.options - gpt-5 textVerbosity", () => {
     expect(result.reasoningEffort).toBe("medium")
     expect(result.reasoningSummary).toBe("auto")
     expect(result.include).toEqual(["reasoning.encrypted_content"])
-    expect(result.textVerbosity).toBe("low")
+    expect(result.textVerbosity).toBe("medium")
   })
 
   test("openai-compatible gpt-5 models omit Responses-only reasoningSummary", () => {

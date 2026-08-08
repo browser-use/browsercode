@@ -18,12 +18,21 @@
 import { Session } from "./cdp/session"
 
 const sessions = new Map<string, Session>()
+const states = new Map<string, Record<string, unknown>>()
 
 export const get = (sessionID: string): Session => {
   const existing = sessions.get(sessionID)
   if (existing) return existing
   const fresh = new Session()
   sessions.set(sessionID, fresh)
+  return fresh
+}
+
+export const state = (sessionID: string): Record<string, unknown> => {
+  const existing = states.get(sessionID)
+  if (existing) return existing
+  const fresh: Record<string, unknown> = {}
+  states.set(sessionID, fresh)
   return fresh
 }
 
@@ -37,6 +46,7 @@ export const invalidate = (sessionID: string, expected: Session, error: Error): 
 }
 
 export const evict = async (sessionID: string): Promise<void> => {
+  states.delete(sessionID)
   const entry = sessions.get(sessionID)
   if (!entry) return
   sessions.delete(sessionID)

@@ -73,6 +73,29 @@ test.skipIf(!enabled)("Session is reused across calls (SessionStore)", async () 
   expect(JSON.parse(result.result)).toBe(true)
 })
 
+test("state persists across calls for one BrowserCode session", async () => {
+  const impl = await Effect.runPromise(Effect.scoped(BrowserExecute.make(dataDir)))
+  await Effect.runPromise(
+    impl.execute(
+      {
+        description: "Checkpoint records",
+        code: `state.records = [{ id: "first" }]; return state.records.length;`,
+      },
+      { sessionID, workspaceDir },
+    ),
+  )
+  const result = await Effect.runPromise(
+    impl.execute(
+      {
+        description: "Reuse checkpointed records",
+        code: `state.records.push({ id: "second" }); return state.records;`,
+      },
+      { sessionID, workspaceDir },
+    ),
+  )
+  expect(JSON.parse(result.result)).toEqual([{ id: "first" }, { id: "second" }])
+})
+
 test.skipIf(!enabled)("workspace import inside a snippet", async () => {
   const file = path.join(workspaceDir, "title.ts")
   await fs.writeFile(
@@ -242,7 +265,9 @@ const runTimeout = async (id: string, code: string, timeout: number, onChunk?: (
       }),
     ),
   ).then(
-    () => { throw new Error("expected timeout") },
+    () => {
+      throw new Error("expected timeout")
+    },
     (e: unknown) => String(e),
   )
   await Promise.all([data, ws].map((d) => fs.rm(d, { recursive: true, force: true })))
@@ -276,7 +301,10 @@ test("console capture and onChunk stop after timeout", async () => {
      await new Promise((r) => setTimeout(r, 250));
      console.log("late");`,
     100,
-    (o) => Effect.sync(() => { chunks.push(o) }),
+    (o) =>
+      Effect.sync(() => {
+        chunks.push(o)
+      }),
   )
   expect(err).toContain("early")
   // Let the orphan's late log fire, then confirm it was not captured.
@@ -305,9 +333,20 @@ test("re-running the execute effect after a timeout gets fresh state", async () 
              await new Promise((r) => setTimeout(r, 60_000));`,
       timeout: 100,
     },
-    { sessionID: "rerun-test", workspaceDir: ws, onChunk: (o) => Effect.sync(() => { chunks.push(o) }) },
+    {
+      sessionID: "rerun-test",
+      workspaceDir: ws,
+      onChunk: (o) =>
+        Effect.sync(() => {
+          chunks.push(o)
+        }),
+    },
   )
-  const run = () => Effect.runPromise(eff).then(() => "resolved", (e: unknown) => String(e))
+  const run = () =>
+    Effect.runPromise(eff).then(
+      () => "resolved",
+      (e: unknown) => String(e),
+    )
   const first = await run()
   const afterFirst = chunks.length
   const second = await run()
@@ -390,7 +429,5 @@ test("overlapping execute calls do not clobber each other's console capture", as
   // Global console must be untouched.
   expect(console.log).toBe(realLogBefore)
 
-  await Promise.all(
-    [aWorkspace, bWorkspace, aData, bData].map((d) => fs.rm(d, { recursive: true, force: true })),
-  )
+  await Promise.all([aWorkspace, bWorkspace, aData, bData].map((d) => fs.rm(d, { recursive: true, force: true })))
 })

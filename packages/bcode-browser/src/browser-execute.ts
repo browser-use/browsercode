@@ -9,6 +9,7 @@
 //   `session`        — the live CDP `Session`, persistent across calls.
 //   `console`        — per-call capture object shadowing the global. Same
 //                      `{log, error, warn, info}` API as the real console.
+//   `state`          — mutable plain object persisted per opencode session.
 //   standard JS globals.
 //
 // When BU_CDP_WS or BU_CDP_URL binds the process to a provisioned browser,
@@ -74,7 +75,7 @@ const timeoutOutput = (output: string) => {
 export const parameters = Schema.Struct({
   code: Schema.String.annotate({
     description:
-      "The JavaScript snippet to execute. `session` (CDP Session) and `console` are in scope; see the `browser-execute` skill for the snippet model.",
+      "The JavaScript snippet to execute. `session` (CDP Session), persistent `state`, and `console` are in scope; see the `browser-execute` skill for the snippet model.",
   }),
   timeout: Schema.optional(Schema.Number).annotate({
     description: `Optional timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS})`,
@@ -149,11 +150,7 @@ const AsyncFunction = (async () => {}).constructor as new (
 const serialize = (v: unknown): string => {
   if (v === undefined) return "null"
   try {
-    return JSON.stringify(
-      v,
-      (_k, val) => (typeof val === "bigint" ? val.toString() : val),
-      2,
-    ) ?? "null"
+    return JSON.stringify(v, (_k, val) => (typeof val === "bigint" ? val.toString() : val), 2) ?? "null"
   } catch {
     return JSON.stringify(String(v))
   }
@@ -177,102 +174,108 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
   // after a timeout must not inherit an inactive scope or frozen capture.
   const execute = (args: Parameters, ctx: ExecuteContext) =>
     Effect.suspend(() => {
-    const session = SessionStore.get(ctx.sessionID)
-    const captured = { active: true, output: "" }
-    const sessionExecution = { active: true }
-    const timeout = Math.min(args.timeout ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS)
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => fs.mkdir(ctx.workspaceDir, { recursive: true }))
+      const session = SessionStore.get(ctx.sessionID)
+      const state = SessionStore.state(ctx.sessionID)
+      const captured = { active: true, output: "" }
+      const sessionExecution = { active: true }
+      const timeout = Math.min(args.timeout ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS)
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => fs.mkdir(ctx.workspaceDir, { recursive: true }))
 
-      const wrapped = yield* Effect.try({
-        try: () => new AsyncFunction("session", "console", args.code),
-        catch: (err) => new Error(`syntax error in browser_execute snippet: ${err}`),
-      })
+        const wrapped = yield* Effect.try({
+          try: () => new AsyncFunction("session", "console", "state", args.code),
+          catch: (err) => new Error(`syntax error in browser_execute snippet: ${err}`),
+        })
 
-      yield* Effect.tryPromise({
-        try: () => ensureCloudConnected(ctx.sessionID, session),
-        catch: (err) => (err instanceof Error ? err : new Error(String(err))),
-      })
+        yield* Effect.tryPromise({
+          try: () => ensureCloudConnected(ctx.sessionID, session),
+          catch: (err) => (err instanceof Error ? err : new Error(String(err))),
+        })
 
-      const tee = (...a: unknown[]) => {
-        if (!captured.active) return
-        captured.output += a.map((x) => (typeof x === "string" ? x : serialize(x))).join(" ") + "\n"
-        if (ctx.onChunk) Effect.runFork(ctx.onChunk(captured.output))
-      }
-      // Prototype-chain to the real `console` so uncommon methods (`debug`,
-      // `dir`, `trace`, `table`, `group`, …) don't throw when a snippet calls
-      // them. The five "log line" methods are tee'd into our capture; anything
-      // else falls through to the real console — written but not captured.
-      const snippetConsole = Object.assign(Object.create(console), {
-        log: tee,
-        error: tee,
-        warn: tee,
-        info: tee,
-        debug: tee,
-      })
-
-      // Screenshot tap. Subscribes to the Session's call-result stream for
-      // the duration of this execute() call; every successful
-      // `Page.captureScreenshot` is collected (drained into `attachments[]`
-      // by the Level-2 wrapper so the agent sees the image inline) and,
-      // when `BCODE_SCREENSHOT_DIR` is set, also written to disk for
-      // eval-judge consumption. Two consumers of one tap.
-      //
-      // Concurrency note: parallel execute() calls against the same Session
-      // (rare but possible — different sessionIDs share no Session, but a
-      // single sessionID with two in-flight tool calls would) each subscribe
-      // independently and would each see all screenshots produced during
-      // their lifetime. Acceptable for v1; opencode tool calls within one
-      // assistant message are serialized anyway.
-      const screenshots: CollectedScreenshot[] = []
-      const dumpDir = process.env.BCODE_SCREENSHOT_DIR
-      const startedAt = Date.now()
-      let seq = 0
-      const unsubscribe = session.onCallResult((method, params, result) => {
-        if (method !== "Page.captureScreenshot") return
-        const r = result as { data?: unknown }
-        if (typeof r?.data !== "string") return
-        const p = (params ?? {}) as { format?: unknown }
-        const mime = screenshotMime(p.format)
-        const ext = screenshotExt(p.format)
-        const idx = seq++
-        screenshots.push({ mime, base64: r.data })
-        if (dumpDir) {
-          const filename = `${ctx.sessionID}-${startedAt}-${String(idx).padStart(3, "0")}.${ext}`
-          fs.mkdir(dumpDir, { recursive: true })
-            .then(() => fs.writeFile(path.join(dumpDir, filename), Buffer.from(r.data as string, "base64")))
-            .catch(() => { /* eval-side dump is best-effort */ })
+        const tee = (...a: unknown[]) => {
+          if (!captured.active) return
+          captured.output += a.map((x) => (typeof x === "string" ? x : serialize(x))).join(" ") + "\n"
+          if (ctx.onChunk) Effect.runFork(ctx.onChunk(captured.output))
         }
-      })
+        // Prototype-chain to the real `console` so uncommon methods (`debug`,
+        // `dir`, `trace`, `table`, `group`, …) don't throw when a snippet calls
+        // them. The five "log line" methods are tee'd into our capture; anything
+        // else falls through to the real console — written but not captured.
+        const snippetConsole = Object.assign(Object.create(console), {
+          log: tee,
+          error: tee,
+          warn: tee,
+          info: tee,
+          debug: tee,
+        })
 
-      const ran = yield* Effect.tryPromise({
-        try: () => withSessionExecution(sessionExecution, () => wrapped(session, snippetConsole)),
-        catch: (err) => new Error(`browser_execute snippet threw: ${err instanceof Error ? err.stack ?? err.message : String(err)}`),
-      }).pipe(Effect.ensuring(Effect.sync(() => unsubscribe())))
+        // Screenshot tap. Subscribes to the Session's call-result stream for
+        // the duration of this execute() call; every successful
+        // `Page.captureScreenshot` is collected (drained into `attachments[]`
+        // by the Level-2 wrapper so the agent sees the image inline) and,
+        // when `BCODE_SCREENSHOT_DIR` is set, also written to disk for
+        // eval-judge consumption. Two consumers of one tap.
+        //
+        // Concurrency note: parallel execute() calls against the same Session
+        // (rare but possible — different sessionIDs share no Session, but a
+        // single sessionID with two in-flight tool calls would) each subscribe
+        // independently and would each see all screenshots produced during
+        // their lifetime. Acceptable for v1; opencode tool calls within one
+        // assistant message are serialized anyway.
+        const screenshots: CollectedScreenshot[] = []
+        const dumpDir = process.env.BCODE_SCREENSHOT_DIR
+        const startedAt = Date.now()
+        let seq = 0
+        const unsubscribe = session.onCallResult((method, params, result) => {
+          if (method !== "Page.captureScreenshot") return
+          const r = result as { data?: unknown }
+          if (typeof r?.data !== "string") return
+          const p = (params ?? {}) as { format?: unknown }
+          const mime = screenshotMime(p.format)
+          const ext = screenshotExt(p.format)
+          const idx = seq++
+          screenshots.push({ mime, base64: r.data })
+          if (dumpDir) {
+            const filename = `${ctx.sessionID}-${startedAt}-${String(idx).padStart(3, "0")}.${ext}`
+            fs.mkdir(dumpDir, { recursive: true })
+              .then(() => fs.writeFile(path.join(dumpDir, filename), Buffer.from(r.data as string, "base64")))
+              .catch(() => {
+                /* eval-side dump is best-effort */
+              })
+          }
+        })
 
-      return { output: captured.output, result: serialize(ran), screenshots } satisfies ExecuteResult
-    }).pipe(
-      Effect.scoped,
-      Effect.timeoutOrElse({
-        duration: timeout,
-        orElse: () =>
-          Effect.suspend(() => {
-            captured.active = false
-            sessionExecution.active = false
-            const output = timeoutOutput(captured.output)
-            const error = new Error(
-              [
-                `browser_execute timed out after ${timeout} ms; this call can no longer issue CDP commands, but the next browser_execute call receives the unchanged CDP session`,
-                output.trim() ? `Partial console output before timeout:\n${output.trimEnd()}` : "",
-              ]
-                .filter(Boolean)
-                .join("\n\n"),
-            )
-            return Effect.fail(error)
-          }),
-      }),
-    )
-  })
+        const ran = yield* Effect.tryPromise({
+          try: () => withSessionExecution(sessionExecution, () => wrapped(session, snippetConsole, state)),
+          catch: (err) =>
+            new Error(
+              `browser_execute snippet threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+            ),
+        }).pipe(Effect.ensuring(Effect.sync(() => unsubscribe())))
+
+        return { output: captured.output, result: serialize(ran), screenshots } satisfies ExecuteResult
+      }).pipe(
+        Effect.scoped,
+        Effect.timeoutOrElse({
+          duration: timeout,
+          orElse: () =>
+            Effect.suspend(() => {
+              captured.active = false
+              sessionExecution.active = false
+              const output = timeoutOutput(captured.output)
+              const error = new Error(
+                [
+                  `browser_execute timed out after ${timeout} ms; this call can no longer issue CDP commands, but the next browser_execute call receives the unchanged CDP session`,
+                  output.trim() ? `Partial console output before timeout:\n${output.trimEnd()}` : "",
+                ]
+                  .filter(Boolean)
+                  .join("\n\n"),
+              )
+              return Effect.fail(error)
+            }),
+        }),
+      )
+    })
 
   return { parameters, execute, skillsDir }
 })

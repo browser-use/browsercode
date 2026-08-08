@@ -514,6 +514,17 @@ describe("tool.read truncation", () => {
     }),
   )
 
+  it.live("does not attach HTML saved with a PDF extension", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped()
+      yield* put(path.join(dir, "blocked.pdf"), "<html><title>Access denied</title></html>")
+
+      const result = yield* exec(dir, { filePath: path.join(dir, "blocked.pdf") })
+      expect(result.attachments).toBeUndefined()
+      expect(result.output).toContain("Access denied")
+    }),
+  )
+
   it.live("large image files are properly attached without error", () =>
     Effect.gen(function* () {
       const result = yield* exec(FIXTURES_DIR, { filePath: path.join(FIXTURES_DIR, "large-image.png") })

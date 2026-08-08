@@ -5,7 +5,9 @@ description: Use ONLY when calling the `browser_execute` tool or driving a real 
 
 The `browser_execute` tool evaluates JavaScript against a connected browser `session` via the Chrome DevTools Protocol.
 The snippet runs in-process; `session` is bound to a long-lived CDP `Session` that persists.
-There is no helper namespace, just `session`, `console`, and standard JS globals. 
+`state` is a mutable plain object that also persists for the BrowserCode session; `console` and standard JS globals are
+available per call. Use `state` for structured records, exact entity identities, selectors, counters, and reusable
+functions instead of reconstructing them from earlier tool output.
 
 Workspace: `<projectRoot>/.bcode/agent-workspace/`. Read/write your reusable scripts here.
 Skills: `{{SKILLS_DIR}}/`. Read-only browser execute reference docs.
@@ -151,6 +153,18 @@ await session.Page.captureScreenshot({ format: "png" })
 // `read` the bytes back. The base64 is still in `data` (via the return value)
 // for the rare case you want to process it programmatically.
 ```
+
+For exhaustive work, first verify the page's data shape with a small sample, then collect a bounded batch in one call
+and checkpoint it in `state`:
+
+```js
+state.records ??= []
+state.records.push(...batch)
+console.log(JSON.stringify({ collected: state.records.length, sample: state.records.slice(-2) }))
+```
+
+Do not print a huge collection after every batch. Keep it in `state`, print compact progress, and emit or save the full
+validated collection once. For response-only tasks, the final response still must contain the requested rows.
 
 `Page.navigate` can return a non-empty `errorText` instead of throwing. Treat it as a failed navigation. If `ERR_TUNNEL_CONNECTION_FAILED` persists, reloading, reattaching, or reconnecting to the same endpoint cannot change its proxy route; use another source or replace the cloud browser instead of retrying it.
 

@@ -270,3 +270,22 @@ test("overlapping execute calls do not clobber each other's console capture", as
     [aWorkspace, bWorkspace, aData, bData].map((d) => fs.rm(d, { recursive: true, force: true })),
   )
 })
+
+test("submit_path records a verified final response", async () => {
+  const data = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-submit-data-"))
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-submit-ws-"))
+  const impl = await Effect.runPromise(Effect.scoped(BrowserExecute.make(data)))
+  await fs.writeFile(path.join(workspace, "answer.md"), "FINAL ANSWER:\ncomplete result\n")
+
+  const result = await Effect.runPromise(
+    impl.execute(
+      { submit_path: "answer.md", description: "Submit verified final response" },
+      { sessionID: "submit-test", workspaceDir: workspace },
+    ),
+  )
+
+  expect(result.output).toContain("Submitted final response")
+  expect(result.submission).toContain("complete result")
+  expect(await fs.readFile(path.join(workspace, "final-response.md"), "utf8")).toBe("FINAL ANSWER:\ncomplete result\n")
+  await Promise.all([data, workspace].map((dir) => fs.rm(dir, { recursive: true, force: true })))
+})

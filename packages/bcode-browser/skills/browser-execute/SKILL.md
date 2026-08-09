@@ -7,6 +7,10 @@ description: Required reference for driving a browser with browser_execute and i
 calls, but local JavaScript variables do not. Use short deterministic snippets, print or return compact structured
 results, and checkpoint large collections under `./.bcode/agent-workspace/`.
 
+For a large or exact final answer, write and verify the complete UTF-8 response under `.bcode/agent-workspace/`, then
+call `browser_execute` with its path relative to that directory in `submit_path` (for example `answer.md`) instead of
+`code`. This changes delivery only; finish the research first.
+
 This read-only skill is materialized under `{{SKILLS_DIR}}/browser-execute/` for the current run.
 
 When `browser_delegate` is available, use it for a bounded, visually driven episode with a known start URL and exact

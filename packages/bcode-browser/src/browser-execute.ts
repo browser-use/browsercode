@@ -54,9 +54,13 @@ const MAX_TIMEOUT_MS = 10 * 60 * 1000
 // substantive output; `description` is a summary written after the code
 // exists, mirroring the shell tool's `command` → ... → `description` shape.
 export const parameters = Schema.Struct({
-  code: Schema.String.annotate({
+  code: Schema.optional(Schema.String).annotate({
     description:
-      "The JavaScript snippet to execute. `session` (CDP Session) and `console` are in scope; see the `browser-execute` skill for the snippet model.",
+      "The JavaScript snippet to execute. `session` (CDP Session) and `console` are in scope; omit only when submitting a final response file.",
+  }),
+  submit_path: Schema.optional(Schema.String).annotate({
+    description:
+      "Submit a complete UTF-8 final response file by path relative to .bcode/agent-workspace (for example answer.md). Use only after verifying the file's counts and required fields.",
   }),
   timeout: Schema.optional(Schema.Number).annotate({
     description: `Optional timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS})`,
@@ -105,6 +109,9 @@ export interface ExecuteResult {
   // order the CDP responses came back. Empty when the snippet didn't take
   // any screenshots.
   readonly screenshots: readonly CollectedScreenshot[]
+  // Present only for submit_path. The Level-1 implementation also copies
+  // the text to final-response.md for harness-side canonical delivery.
+  readonly submission?: string
 }
 
 const SCREENSHOT_FORMAT_TO_MIME: Record<string, CollectedScreenshot["mime"]> = {
@@ -159,11 +166,43 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
 
   const execute = (args: Parameters, ctx: ExecuteContext) =>
     Effect.gen(function* () {
-      const session = SessionStore.get(ctx.sessionID)
       yield* Effect.promise(() => fs.mkdir(ctx.workspaceDir, { recursive: true }))
 
+      const modes = [Boolean(args.code), Boolean(args.submit_path)].filter(Boolean).length
+      if (modes !== 1) {
+        return yield* Effect.fail(new Error("Provide exactly one of code or submit_path"))
+      }
+
+      if (args.submit_path) {
+        const submitted = path.isAbsolute(args.submit_path)
+          ? path.normalize(args.submit_path)
+          : path.resolve(ctx.workspaceDir, args.submit_path)
+        const relative = path.relative(ctx.workspaceDir, submitted)
+        if (relative.startsWith("..") || path.isAbsolute(relative)) {
+          return yield* Effect.fail(new Error("submit_path must be under .bcode/agent-workspace"))
+        }
+        const submission = yield* Effect.tryPromise({
+          try: () => fs.readFile(submitted, "utf8"),
+          catch: (err) => new Error(`failed to read submit_path: ${err}`),
+        })
+        if (!submission.trim()) {
+          return yield* Effect.fail(new Error("Cannot submit an empty final response"))
+        }
+        yield* Effect.promise(() => fs.writeFile(path.join(ctx.workspaceDir, "final-response.md"), submission))
+        return {
+          output: `Submitted final response from ${relative} (${submission.length} characters).`,
+          result: "null",
+          screenshots: [],
+          submission,
+        } satisfies ExecuteResult
+      }
+
+      const code = args.code
+      if (!code) return yield* Effect.fail(new Error("code is required"))
+      const session = SessionStore.get(ctx.sessionID)
+
       const wrapped = yield* Effect.try({
-        try: () => new AsyncFunction("session", "console", args.code),
+        try: () => new AsyncFunction("session", "console", code),
         catch: (err) => new Error(`syntax error in browser_execute snippet: ${err}`),
       })
 

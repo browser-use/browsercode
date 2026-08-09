@@ -22,5 +22,11 @@ export function sniffAttachmentMime(bytes: Uint8Array, fallback: string) {
     return "image/webp"
   }
 
+  if (isMedia(fallback)) {
+    const text = new TextDecoder().decode(bytes.subarray(0, 512)).trimStart().toLowerCase()
+    if (text.startsWith("<!doctype html") || text.startsWith("<html")) return "text/html"
+    return "application/octet-stream"
+  }
+
   return fallback
 }

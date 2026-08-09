@@ -266,7 +266,77 @@ test("overlapping execute calls do not clobber each other's console capture", as
   // Global console must be untouched.
   expect(console.log).toBe(realLogBefore)
 
-  await Promise.all(
-    [aWorkspace, bWorkspace, aData, bData].map((d) => fs.rm(d, { recursive: true, force: true })),
+  await Promise.all([aWorkspace, bWorkspace, aData, bData].map((d) => fs.rm(d, { recursive: true, force: true })))
+})
+
+test("persistent state survives across browser_execute calls", async () => {
+  const data = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-state-data-"))
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-state-ws-"))
+  const id = `state-${Math.random().toString(36).slice(2, 8)}`
+  const impl = await Effect.runPromise(Effect.scoped(BrowserExecute.make(data)))
+
+  const first = await Effect.runPromise(
+    impl.execute(
+      { code: `state.records = [{ id: "a" }]; return state.records.length` },
+      { sessionID: id, workspaceDir: workspace },
+    ),
   )
+  const second = await Effect.runPromise(
+    impl.execute(
+      { code: `state.records.push({ id: "b" }); return state.records` },
+      { sessionID: id, workspaceDir: workspace },
+    ),
+  )
+
+  expect(first.status).toBe("completed")
+  expect(JSON.parse(first.result)).toBe(1)
+  expect(JSON.parse(second.result)).toEqual([{ id: "a" }, { id: "b" }])
+  await SessionStore.evict(id)
+  await Promise.all([data, workspace].map((dir) => fs.rm(dir, { recursive: true, force: true })))
+})
+
+test("long cells yield and can be polled", async () => {
+  const data = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-yield-data-"))
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-yield-ws-"))
+  const id = `yield-${Math.random().toString(36).slice(2, 8)}`
+  const impl = await Effect.runPromise(Effect.scoped(BrowserExecute.make(data)))
+
+  const started = await Effect.runPromise(
+    impl.execute(
+      {
+        code: `console.log("started"); await new Promise((resolve) => setTimeout(resolve, 80)); return 42`,
+        yield_time_ms: 5,
+      },
+      { sessionID: id, workspaceDir: workspace },
+    ),
+  )
+  expect(started.status).toBe("running")
+  expect(started.cellID).toBeDefined()
+  expect(started.output).toContain("started")
+
+  const completed = await Effect.runPromise(
+    impl.execute({ cell_id: started.cellID, yield_time_ms: 200 }, { sessionID: id, workspaceDir: workspace }),
+  )
+  expect(completed.status).toBe("completed")
+  expect(JSON.parse(completed.result)).toBe(42)
+  await SessionStore.evict(id)
+  await Promise.all([data, workspace].map((dir) => fs.rm(dir, { recursive: true, force: true })))
+})
+
+test("submit_path records a verified final response", async () => {
+  const data = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-submit-data-"))
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-submit-ws-"))
+  const id = `submit-${Math.random().toString(36).slice(2, 8)}`
+  const impl = await Effect.runPromise(Effect.scoped(BrowserExecute.make(data)))
+  await fs.writeFile(path.join(workspace, "answer.md"), "FINAL ANSWER:\ncomplete result\n")
+
+  const result = await Effect.runPromise(
+    impl.execute({ submit_path: "answer.md" }, { sessionID: id, workspaceDir: workspace }),
+  )
+  expect(result.status).toBe("submitted")
+  expect(result.output).toContain("Submitted final response")
+  expect(result.submission).toContain("complete result")
+  expect(await fs.readFile(path.join(workspace, "final-response.md"), "utf8")).toBe("FINAL ANSWER:\ncomplete result\n")
+  await SessionStore.evict(id)
+  await Promise.all([data, workspace].map((dir) => fs.rm(dir, { recursive: true, force: true })))
 })

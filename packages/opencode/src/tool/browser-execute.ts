@@ -11,9 +11,9 @@ import * as Tool from "./tool"
 import { Truncate } from "./truncate"
 import DESCRIPTION from "./browser-execute.txt"
 
-const MAX_METADATA_LENGTH = 30_000
-const MAX_CONTEXT_BYTES = 8 * 1024
-const MAX_CONTEXT_LINES = 400
+const MAX_METADATA_LENGTH = 12_000
+const MAX_CONTEXT_BYTES = 4 * 1024
+const MAX_CONTEXT_LINES = 200
 const preview = (text: string) =>
   text.length <= MAX_METADATA_LENGTH ? text : "...\n\n" + text.slice(-MAX_METADATA_LENGTH)
 
@@ -71,6 +71,10 @@ export const BrowserExecuteTool = Tool.define(
             url: `data:${s.mime};base64,${s.base64}`,
           }))
           const fullOutput = [
+            result.status === "running"
+              ? `Cell ${result.cellID} is still running. Poll it with cell_id, or pass interrupt=true to stop it.`
+              : "",
+            result.status === "interrupted" ? `Cell ${result.cellID} was interrupted.` : "",
             result.output.trimEnd(),
             result.result === "null" ? "" : `=> ${result.result}`,
             attachments.length > 0
@@ -87,6 +91,8 @@ export const BrowserExecuteTool = Tool.define(
             title: "browser_execute",
             output: contextualOutput.content,
             metadata: {
+              status: result.status,
+              cellID: result.cellID,
               result: result.result,
               output: preview(result.output),
               truncated: contextualOutput.truncated,

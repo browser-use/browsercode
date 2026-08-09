@@ -43,25 +43,41 @@
 import fs from "fs/promises"
 import path from "path"
 import { Effect, Schema } from "effect"
+import { ExecutionStore } from "./execution-store"
 import { SessionStore } from "./session-store"
 import { Skills } from "./skills"
 
-const DEFAULT_TIMEOUT_MS = 60 * 1000
+const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 const MAX_TIMEOUT_MS = 10 * 60 * 1000
+const DEFAULT_YIELD_MS = 10 * 1000
+const MAX_YIELD_MS = 60 * 1000
 
 // Field order matters: providers stream tool-call args in schema-declared
 // order, so the model commits to whichever field comes first. `code` is the
 // substantive output; `description` is a summary written after the code
 // exists, mirroring the shell tool's `command` → ... → `description` shape.
 export const parameters = Schema.Struct({
-  code: Schema.String.annotate({
+  code: Schema.optional(Schema.String).annotate({
     description:
-      "The JavaScript snippet to execute. `session` (CDP Session) and `console` are in scope; see the `browser-execute` skill for the snippet model.",
+      "JavaScript to execute. `session`, persistent `state`, `workspaceDir`, and `console` are in scope. Omit when polling, interrupting, or submitting.",
+  }),
+  cell_id: Schema.optional(Schema.String).annotate({
+    description: "A yielded cell ID to poll or interrupt.",
+  }),
+  interrupt: Schema.optional(Schema.Boolean).annotate({
+    description: "Interrupt cell_id and reset its CDP connection. Persistent state is retained.",
+  }),
+  yield_time_ms: Schema.optional(Schema.Number).annotate({
+    description: `Return a cell_id when code is still running after this delay (default ${DEFAULT_YIELD_MS}, max ${MAX_YIELD_MS}).`,
+  }),
+  submit_path: Schema.optional(Schema.String).annotate({
+    description:
+      "Submit a UTF-8 file under .bcode/agent-workspace as the canonical final response. Use only after verifying it is complete.",
   }),
   timeout: Schema.optional(Schema.Number).annotate({
     description: `Optional timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS})`,
   }),
-  description: Schema.String.annotate({
+  description: Schema.optional(Schema.String).annotate({
     description:
       "Clear, concise description of what this snippet does in 3-7 words. Examples:\nInput: code that connects to local Chrome\nOutput: Connect to local Chrome\n\nInput: scrape product titles from current page\nOutput: Scrape product titles\n\nInput: capture a screenshot of the homepage\nOutput: Screenshot homepage",
   }),
@@ -96,6 +112,8 @@ export interface CollectedScreenshot {
 }
 
 export interface ExecuteResult {
+  readonly status: "completed" | "running" | "interrupted" | "submitted"
+  readonly cellID?: string
   readonly output: string
   // The snippet's `return` value, JSON-serialized when possible. `undefined`
   // serializes as `null` (JSON has no undefined). Non-serializable values
@@ -105,6 +123,7 @@ export interface ExecuteResult {
   // order the CDP responses came back. Empty when the snippet didn't take
   // any screenshots.
   readonly screenshots: readonly CollectedScreenshot[]
+  readonly submission?: string
 }
 
 const SCREENSHOT_FORMAT_TO_MIME: Record<string, CollectedScreenshot["mime"]> = {
@@ -133,11 +152,7 @@ const AsyncFunction = (async () => {}).constructor as new (
 const serialize = (v: unknown): string => {
   if (v === undefined) return "null"
   try {
-    return JSON.stringify(
-      v,
-      (_k, val) => (typeof val === "bigint" ? val.toString() : val),
-      2,
-    ) ?? "null"
+    return JSON.stringify(v, (_k, val) => (typeof val === "bigint" ? val.toString() : val), 2) ?? "null"
   } catch {
     return JSON.stringify(String(v))
   }
@@ -157,20 +172,21 @@ const serialize = (v: unknown): string => {
 export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string) {
   const skillsDir = yield* Effect.promise(() => Skills.resolveSkillsDir(dataDir))
 
-  const execute = (args: Parameters, ctx: ExecuteContext) =>
+  const runSnippet = (args: Parameters & { code: string }, ctx: ExecuteContext, onChunk: (output: string) => void) =>
     Effect.gen(function* () {
       const session = SessionStore.get(ctx.sessionID)
+      const state = SessionStore.state(ctx.sessionID)
       yield* Effect.promise(() => fs.mkdir(ctx.workspaceDir, { recursive: true }))
 
       const wrapped = yield* Effect.try({
-        try: () => new AsyncFunction("session", "console", args.code),
+        try: () => new AsyncFunction("session", "console", "state", "workspaceDir", args.code),
         catch: (err) => new Error(`syntax error in browser_execute snippet: ${err}`),
       })
 
       let output = ""
       const tee = (...a: unknown[]) => {
         output += a.map((x) => (typeof x === "string" ? x : serialize(x))).join(" ") + "\n"
-        if (ctx.onChunk) Effect.runFork(ctx.onChunk(output))
+        onChunk(output)
       }
       // Prototype-chain to the real `console` so uncommon methods (`debug`,
       // `dir`, `trace`, `table`, `group`, …) don't throw when a snippet calls
@@ -214,16 +230,21 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
           const filename = `${ctx.sessionID}-${startedAt}-${String(idx).padStart(3, "0")}.${ext}`
           fs.mkdir(dumpDir, { recursive: true })
             .then(() => fs.writeFile(path.join(dumpDir, filename), Buffer.from(r.data as string, "base64")))
-            .catch(() => { /* eval-side dump is best-effort */ })
+            .catch(() => {
+              /* eval-side dump is best-effort */
+            })
         }
       })
 
       const ran = yield* Effect.tryPromise({
-        try: () => wrapped(session, snippetConsole),
-        catch: (err) => new Error(`browser_execute snippet threw: ${err instanceof Error ? err.stack ?? err.message : String(err)}`),
+        try: () => wrapped(session, snippetConsole, state, ctx.workspaceDir),
+        catch: (err) =>
+          new Error(
+            `browser_execute snippet threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+          ),
       }).pipe(Effect.ensuring(Effect.sync(() => unsubscribe())))
 
-      return { output, result: serialize(ran), screenshots } satisfies ExecuteResult
+      return { output, result: serialize(ran), screenshots }
     }).pipe(
       Effect.scoped,
       Effect.timeoutOrElse({
@@ -231,6 +252,78 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
         orElse: () => Effect.fail(new Error("browser_execute timed out")),
       }),
     )
+
+  const execute = (args: Parameters, ctx: ExecuteContext) =>
+    Effect.tryPromise({
+      try: async () => {
+        const modes = [Boolean(args.code), Boolean(args.cell_id), Boolean(args.submit_path)].filter(Boolean).length
+        if (modes !== 1) throw new Error("Provide exactly one of code, cell_id, or submit_path")
+
+        if (args.submit_path) {
+          const submitted = path.isAbsolute(args.submit_path)
+            ? path.normalize(args.submit_path)
+            : path.resolve(ctx.workspaceDir, args.submit_path)
+          const relative = path.relative(ctx.workspaceDir, submitted)
+          if (relative.startsWith("..") || path.isAbsolute(relative)) {
+            throw new Error("submit_path must be under .bcode/agent-workspace")
+          }
+          const submission = await fs.readFile(submitted, "utf8")
+          if (!submission.trim()) throw new Error("Cannot submit an empty final response")
+          await fs.writeFile(path.join(ctx.workspaceDir, "final-response.md"), submission)
+          return {
+            status: "submitted" as const,
+            output: `Submitted final response from ${relative} (${submission.length} characters).`,
+            result: "null",
+            screenshots: [],
+            submission,
+          }
+        }
+
+        if (args.cell_id) {
+          const cell = args.interrupt
+            ? await ExecutionStore.interrupt(ctx.sessionID, args.cell_id)
+            : await ExecutionStore.wait(
+                ExecutionStore.get(ctx.sessionID, args.cell_id),
+                Math.min(args.yield_time_ms ?? DEFAULT_YIELD_MS, MAX_YIELD_MS),
+              )
+          if (cell.status === "failed") throw cell.error
+          if (cell.status === "completed" && cell.result) {
+            return { status: "completed" as const, cellID: cell.id, ...cell.result }
+          }
+          return {
+            status: cell.status === "interrupted" ? ("interrupted" as const) : ("running" as const),
+            cellID: cell.id,
+            output: cell.output,
+            result: "null",
+            screenshots: [],
+          }
+        }
+
+        const code = args.code
+        if (!code) throw new Error("code is required")
+        const cell = ExecutionStore.start(ctx.sessionID, (update) =>
+          Effect.runPromise(
+            runSnippet({ ...args, code }, ctx, (output) => {
+              update(output)
+              if (ctx.onChunk) Effect.runFork(ctx.onChunk(output))
+            }),
+          ),
+        )
+        await ExecutionStore.wait(cell, Math.min(args.yield_time_ms ?? DEFAULT_YIELD_MS, MAX_YIELD_MS))
+        if (cell.status === "failed") throw cell.error
+        if (cell.status === "completed" && cell.result) {
+          return { status: "completed" as const, cellID: cell.id, ...cell.result }
+        }
+        return {
+          status: "running" as const,
+          cellID: cell.id,
+          output: cell.output,
+          result: "null",
+          screenshots: [],
+        }
+      },
+      catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+    })
 
   return { parameters, execute, skillsDir }
 })

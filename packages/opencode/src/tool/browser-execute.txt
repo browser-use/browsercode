@@ -8,3 +8,5 @@ Usage:
 - Return only the fields needed for the current decision. Large output is saved automatically; inspect that file with focused Grep/Read calls instead of loading it whole.
 - After three browser calls that add no new evidence toward the requested result, stop probing the same strategy: change approach, report the blocker, or finish.
 - Returns console output from the snippet; screenshots taken attach automatically as images.
+- `state` and the CDP session persist across calls. Long snippets yield a cell ID that can be polled or interrupted.
+- Submit large exact final responses from a verified file under `workspaceDir` using `submit_path`.

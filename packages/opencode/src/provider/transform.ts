@@ -675,6 +675,11 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
       thinking: { thinking: { type: "adaptive" } },
     }
   }
+  if (id.includes("qwen3.8") && model.api.npm === "@openrouter/ai-sdk-provider") {
+    return Object.fromEntries(
+      (["low", "medium", "xhigh"] as const).map((effort) => [effort, { reasoning: { effort } }]),
+    )
+  }
   const adaptiveThinkingOmitted = anthropicOmitsThinking(model.api.id)
   const adaptiveEfforts = anthropicAdaptiveEfforts(model.api.id)
   if (

@@ -2960,6 +2960,21 @@ describe("ProviderTransform.variants", () => {
   })
 
   describe("@openrouter/ai-sdk-provider", () => {
+    test("qwen3.8 returns its supported reasoning efforts", () => {
+      const model = createMockModel({
+        id: "openrouter/qwen/qwen3.8-27b",
+        providerID: "openrouter",
+        api: {
+          id: "qwen/qwen3.8-27b",
+          url: "https://openrouter.ai",
+          npm: "@openrouter/ai-sdk-provider",
+        },
+      })
+      const result = ProviderTransform.variants(model)
+      expect(Object.keys(result)).toEqual(["low", "medium", "xhigh"])
+      expect(result.medium).toEqual({ reasoning: { effort: "medium" } })
+    })
+
     test("returns widely supported efforts for other reasoning models", () => {
       const model = createMockModel({
         id: "openrouter/test-model",

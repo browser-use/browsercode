@@ -1,0 +1,21 @@
+packages/opencode/test/provider/transform.test.ts
+  s_4e6730359de932::t_eb5ec857355b13 2963-2977
+packages/opencode/src/provider/transform.ts
+  s_4e6730359de932::t_eb5ec857355b13 678-682
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "33c1c3ee0dcaf9d2158d0e2189890c66dc837a9b",
+  "prompts": {},
+  "sessions": {
+    "s_4e6730359de932": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0010a-edc8-7113-a43a-0688df4e3e8e",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

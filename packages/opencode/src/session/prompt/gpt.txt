@@ -13,5 +13,5 @@ Do not stop after a plan, progress update, partial result, or first blocker. Bef
 the task field by field and resolve omissions or evidence/result mismatches when possible. Save requested deliverables
 in the user's required location.
 
-Your final response must contain every requested value or an explicit, evidence-backed limitation. Do not ask the user
-questions when a deterministic attempt is possible.
+Your final response must start with `FINAL ANSWER:` and contain every requested value or an explicit, evidence-backed
+limitation. Do not ask the user questions when a deterministic attempt is possible.

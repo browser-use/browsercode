@@ -1248,7 +1248,7 @@ export function options(input: {
       !input.model.api.id.includes("-chat") &&
       input.model.providerID !== "azure"
     ) {
-      result["textVerbosity"] = "low"
+      result["textVerbosity"] = input.model.api.id.includes("gpt-5.5") ? "medium" : "low"
     }
 
     if (input.model.providerID.startsWith("opencode")) {

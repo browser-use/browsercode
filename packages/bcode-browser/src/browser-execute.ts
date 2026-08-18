@@ -51,7 +51,7 @@ import { SessionStore } from "./session-store"
 import { Skills } from "./skills"
 
 const DEFAULT_TIMEOUT_MS = 60 * 1000
-const MAX_TIMEOUT_MS = 10 * 60 * 1000
+const MAX_TIMEOUT_MS = 2 * 60 * 1000
 const MAX_TIMEOUT_OUTPUT_BYTES = 8 * 1024
 const TIMEOUT_OUTPUT_TRUNCATED = "[partial console output truncated; showing final bytes]\n"
 const v4Connections = new Map<string, Promise<void>>()

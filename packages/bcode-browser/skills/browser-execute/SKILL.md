@@ -69,4 +69,6 @@ const helpers = await import(`${path}?t=${Date.now()}`)
 
 Use `await import(...)`; top-level static imports are unsupported. Avoid CPU-bound loops without await points. Prefer
 several small calls over one long call. After a timeout, continue in the next call if `Target.getTargets` still works.
-Before submitting, verify the current URL, selected entity or variant, counts, and every required field.
+Print or return only the evidence needed for the current decision. After three tool calls that add no new evidence
+toward the same missing fact, change the source or approach instead of repeating the strategy. Before submitting,
+verify the current URL, selected entity or variant, counts, and every required field.

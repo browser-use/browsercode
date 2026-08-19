@@ -14,7 +14,8 @@ const server = Bun.serve({
       ws.subscribe(channel)
     },
     message(ws, message) {
-      const request = JSON.parse(String(message)) as { id?: number }
+      const request = JSON.parse(String(message)) as { id?: number; method?: string }
+      if (request.method === "Test.pending") return
       if (typeof request.id === "number") ws.send(JSON.stringify({ id: request.id, result: {} }))
     },
   },
@@ -159,4 +160,14 @@ test("invalidate while the socket is connecting closes it and rejects", async ()
   expect(s.isConnected()).toBe(false)
   await expect(s._call("Runtime.evaluate", { expression: "1" })).rejects.toThrow("retired by test")
   await expect(s.connect({ wsUrl: `ws://127.0.0.1:${server.port}/` })).rejects.toThrow("retired by test")
+})
+
+test("invalidate rejects in-flight CDP calls", async () => {
+  const s = new Session()
+  await s.connect({ wsUrl: `ws://127.0.0.1:${server.port}/` })
+  const pending = s._call("Test.pending", {})
+
+  s.invalidate(new Error("retired with a pending call"))
+
+  await expect(pending).rejects.toThrow("retired with a pending call")
 })

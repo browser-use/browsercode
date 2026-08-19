@@ -206,6 +206,8 @@ export class Session implements Transport {
     const ws = this.ws;
     this.ws = undefined;
     this.activeSessionId = undefined;
+    for (const [, pending] of this.pending) pending.reject(error);
+    this.pending.clear();
     try { ws?.close(); } catch { /* ignore */ }
   }
 

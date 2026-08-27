@@ -1,0 +1,32 @@
+packages/opencode/src/tool/browser-execute.txt
+  s_af4f12143f6989::t_1df0e877b10cd7 11
+packages/bcode-browser/skills/browser-execute/SKILL.md
+  s_af4f12143f6989::t_1df0e877b10cd7 11-12
+  s_af4f12143f6989::t_3f5cec7c2c17b4 10,13
+packages/opencode/src/util/media.ts
+  s_af4f12143f6989::t_3f5cec7c2c17b4 25-30
+packages/opencode/test/tool/read.test.ts
+  s_af4f12143f6989::t_ee84c5aae9c209 517-527
+packages/bcode-browser/test/browser-execute.test.ts
+  s_af4f12143f6989::t_3d68232575c0a7 289
+  s_af4f12143f6989::t_ee84c5aae9c209 273-288,290-291
+packages/bcode-browser/src/browser-execute.ts
+  s_af4f12143f6989::t_1df0e877b10cd7 63
+  s_af4f12143f6989::t_3f5cec7c2c17b4 57,59-62,112-114,171-203,205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a97bc44cd2a2546318e9fcc2ea43bd5d3cac2280",
+  "prompts": {},
+  "sessions": {
+    "s_af4f12143f6989": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fd94a-ee7f-7092-b4c8-4b6ea0c2764a",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

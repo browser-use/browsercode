@@ -1,0 +1,25 @@
+packages/opencode/src/provider/transform.ts
+  s_fd1cbe21284557::t_4943da7e718ef3 1251
+packages/opencode/src/session/prompt/gpt.txt
+  s_fd1cbe21284557::t_4943da7e718ef3 16-17
+packages/opencode/src/tool/browser-execute.ts
+  s_fd1cbe21284557::t_4943da7e718ef3 10,15-16,30,73-85,88-94
+packages/opencode/test/provider/transform.test.ts
+  s_fd1cbe21284557::t_4943da7e718ef3 402-407,424
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5a5ad5fcdfa7a9b762fbb0fe8fc21a6b76bbf657",
+  "prompts": {},
+  "sessions": {
+    "s_fd1cbe21284557": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01138-a51a-7011-969b-7aefdb8ac9f9",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+packages/bcode-browser/skills/browser-execute/SKILL.md
+  s_fd1cbe21284557::t_2dfca1a910feec 3,6-8,10,12,14-15,17,20,26-28,30,32-33,37-38,40,42-43,46,48-51,53-54,57-63,66-67,70-72
+packages/opencode/src/session/prompt/gpt.txt
+  s_fd1cbe21284557::t_2dfca1a910feec 1,3-6,8-10,12-14,16-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "95c9f1ceeda55a98ca450907315d2836ae6e05b4",
+  "prompts": {},
+  "sessions": {
+    "s_fd1cbe21284557": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01138-a51a-7011-969b-7aefdb8ac9f9",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+packages/sdk-next/README.md
+  s_86d24eaeebcb12::t_e60b51447e2c5c 16-30
+packages/sdk-next/test/ask-human-example.test.ts
+  s_86d24eaeebcb12::t_e60b51447e2c5c 1-34
+packages/sdk-next/examples/ask-human.ts
+  s_86d24eaeebcb12::t_e60b51447e2c5c 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "7a0e9b3e19e1ee7a0c9932fac6041aa694f89fb9",
+  "prompts": {},
+  "sessions": {
+    "s_86d24eaeebcb12": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a005bc-1d17-73c3-b1f5-38259988bc61",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "MagMueller <mamagnus00@gmail.com>"
+    }
+  }
+}

@@ -135,7 +135,7 @@ const OpenAIResponsesCoreFields = {
   include: optionalArray(OpenAIOptions.OpenAIResponseIncludable),
   reasoning: Schema.optional(
     Schema.Struct({
-      effort: Schema.optional(OpenAIOptions.OpenAIReasoningEffort),
+      effort: Schema.optional(Schema.Union([OpenAIOptions.OpenAIReasoningEffort, Schema.Literal("max")])),
       summary: Schema.optional(Schema.Literal("auto")),
     }),
   ),
@@ -457,7 +457,10 @@ const lowerOptions = Effect.fn("OpenAIResponses.lowerOptions")(function* (reques
   const store = OpenAIOptions.store(request)
   const promptCacheKey = OpenAIOptions.promptCacheKey(request)
   const effort = OpenAIOptions.reasoningEffort(request)
-  if (effort && !OpenAIOptions.isReasoningEffort(effort))
+  const astra = request.model.id === "gpt-6-astra"
+  if (astra && (effort === "none" || effort === "minimal"))
+    return yield* invalid(`GPT-6 Astra does not support reasoning effort ${effort}; use low or higher`)
+  if (effort && !OpenAIOptions.isReasoningEffort(effort) && !(astra && effort === "max"))
     return yield* invalid(`OpenAI Responses does not support reasoning effort ${effort}`)
   const summary = OpenAIOptions.reasoningSummary(request)
   const include = OpenAIOptions.include(request)

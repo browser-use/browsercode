@@ -114,6 +114,30 @@ export const Model = Schema.Struct({
 })
 export type Model = Schema.Schema.Type<typeof Model>
 
+// Temporary fallback until models.dev lists Astra. Never replace catalog metadata.
+// https://developers.openai.com/api/docs/models/gpt-6-astra
+// https://developers.openai.com/api/docs/pricing
+const astra: Model = {
+  id: "gpt-6-astra",
+  name: "GPT-6 Astra",
+  family: "gpt-6",
+  release_date: "",
+  attachment: true,
+  reasoning: true,
+  temperature: false,
+  tool_call: true,
+  reasoning_options: [{ type: "effort", values: ["low", "medium", "high", "xhigh", "max"] }],
+  modalities: { input: ["text", "image"], output: ["text"] },
+  limit: { context: 1050000, input: 922000, output: 128000 },
+  cost: {
+    input: 10,
+    output: 50,
+    cache_read: 1,
+    cache_write: 12.5,
+    tiers: [{ tier: { type: "context", size: 272000 }, input: 20, output: 75, cache_read: 2, cache_write: 25 }],
+  },
+}
+
 export const Provider = Schema.Struct({
   api: Schema.optional(Schema.String),
   name: Schema.String,
@@ -222,7 +246,19 @@ const layer = Layer.effect(
         }),
       )
       return JSON.parse(text) as Record<string, Provider>
-    }).pipe(Effect.withSpan("ModelsDev.populate"), Effect.orDie)
+    }).pipe(
+      Effect.map((catalog) => {
+        if (source !== "https://models.dev" || Flag.OPENCODE_MODELS_PATH) return catalog
+        const openai = catalog.openai
+        if (!openai || openai.models[astra.id]) return catalog
+        return {
+          ...catalog,
+          openai: { ...openai, models: { ...openai.models, [astra.id]: astra } },
+        }
+      }),
+      Effect.withSpan("ModelsDev.populate"),
+      Effect.orDie,
+    )
 
     const [cachedGet, invalidate] = yield* Effect.cachedInvalidateWithTTL(populate, Duration.infinity)
 

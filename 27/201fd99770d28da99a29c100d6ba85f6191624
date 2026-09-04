@@ -1,0 +1,30 @@
+packages/opencode/test/provider/astra.test.ts
+  s_d542afd7f6cf6a::t_f7c240db7a91a7 1-49,52-63,65-72,75-76,81-88,91-98,100-109,111-119,121-124
+packages/llm/src/protocols/openai-responses.ts
+  s_d542afd7f6cf6a::t_22d11213a4ec92 138,460-463
+packages/core/test/models.test.ts
+  s_d542afd7f6cf6a::t_f7c240db7a91a7 130-136,138-167,185-186,192-193,200-203
+packages/llm/test/provider/openai-responses.test.ts
+  s_d542afd7f6cf6a::t_f7c240db7a91a7 43-50,52,54-64,66-73,75-80
+packages/core/src/models-dev.ts
+  s_d542afd7f6cf6a::t_27a4c2e0cef71c 139
+  s_d542afd7f6cf6a::t_22d11213a4ec92 117-138,140,249-261
+packages/opencode/src/provider/transform.ts
+  s_d542afd7f6cf6a::t_22d11213a4ec92 587,1228-1231
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "27201fd99770d28da99a29c100d6ba85f6191624",
+  "prompts": {},
+  "sessions": {
+    "s_d542afd7f6cf6a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a068ed-abe7-7672-8681-5a7f7dfe6583",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

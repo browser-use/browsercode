@@ -9,6 +9,30 @@ import os from "os"
 import path from "path"
 import { Skills } from "../src/skills"
 
+test("enabled launches teach Jev in the required skill; disabled launches keep the original skill", async () => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-jev-skill-"))
+  try {
+    for (const enabled of ["0", "1", "0"]) {
+      const proc = Bun.spawn([process.execPath, "--eval", `
+        import { Skills } from ${JSON.stringify(path.resolve(import.meta.dir, "../src/skills.ts"))};
+        await Skills.resolveSkillsDir(${JSON.stringify(dataDir)});
+      `], { env: { ...process.env, BCODE_JEV: enabled }, stdout: "pipe", stderr: "pipe" })
+      expect(await proc.exited).toBe(0)
+      const actual = await Bun.file(path.join(dataDir, "skills/browser-execute/SKILL.md")).text()
+      if (enabled === "1") {
+        expect(actual).toContain("await jev({goal:")
+        expect(actual).not.toContain("There is no helper namespace")
+        expect(actual.indexOf("await jev(")).toBeLessThan(actual.indexOf("## Connecting"))
+        continue
+      }
+      const original = await Bun.file(path.resolve(import.meta.dir, "../skills/browser-execute/SKILL.md")).text()
+      expect(actual).toBe(original.replaceAll("{{SKILLS_DIR}}", path.join(dataDir, "skills")))
+    }
+  } finally {
+    await fs.rm(dataDir, { recursive: true, force: true })
+  }
+})
+
 test("resolveSkillsDir materializes skills with {{SKILLS_DIR}} substituted", async () => {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-skills-"))
   try {

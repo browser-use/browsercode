@@ -45,12 +45,19 @@ const materialize = async (target: string): Promise<string> => {
   // @ts-expect-error generated at build time
   const embed = isCompiled ? await import("bcode-skills.gen.ts").catch(() => null) : null
   if (isCompiled && !embed) throw new Error("bcode-skills.gen.ts not found — was the build script updated?")
-  const want = `${embed?.buildHash ?? "dev"}:${target}`
+  const want = `${embed?.buildHash ?? "dev"}:${target}:jev=${process.env.BCODE_JEV === "1"}`
   if (embed && (await Bun.file(path.join(target, SENTINEL)).text().catch(() => null)) === want) return target
 
   const files = embed
     ? await readEmbed(embed.default as Record<string, string>)
     : await readDevSkills()
+  if (process.env.BCODE_JEV === "1") {
+    const { instructions } = await import("./jev")
+    files["browser-execute/SKILL.md"] = files["browser-execute/SKILL.md"]!.replace(
+      "There is no helper namespace, just `session`, `console`, and standard JS globals.",
+      "The snippet also exposes the optional `jev` helper.\n\n" + instructions,
+    )
+  }
   await fs.mkdir(target, { recursive: true })
   await Promise.all(
     Object.entries(files).map(async ([rel, text]) => {

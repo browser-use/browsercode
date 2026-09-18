@@ -1,0 +1,21 @@
+packages/bcode-browser/src/browser-execute.ts
+  s_0ea552c519f69f::t_2a3447cff3f4cb 78-79
+packages/bcode-browser/src/jev.ts
+  s_0ea552c519f69f::t_2a3447cff3f4cb 55-56,58-59,62-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a444e166a0a33bac1a6b08f177b432de0bb60f22",
+  "prompts": {},
+  "sessions": {
+    "s_0ea552c519f69f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ac09-948b-7802-983a-311e52c6ad99",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

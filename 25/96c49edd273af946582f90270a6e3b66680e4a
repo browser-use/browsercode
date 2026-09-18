@@ -1,0 +1,32 @@
+README.md
+  s_0ea552c519f69f::t_3f6db098772c91 109-130
+packages/bcode-browser/src/jev.ts
+  s_0ea552c519f69f::t_eb3ac86cdab332 70,78,87,103-107,147-148,152-155,169,177-180,195,214
+  s_0ea552c519f69f::t_8ba19d432a0761 1-69,71-77,79-86,88-102,108-146,149-151,156-168,170-176,181-194,196-213,215-271
+  s_0ea552c519f69f::t_58a020064ff17e 272-392
+packages/bcode-browser/test/jev.test.ts
+  s_0ea552c519f69f::t_8d429a9eb2940d 1-41,43-156
+  s_0ea552c519f69f::t_37c0f397055918 42
+  s_0ea552c519f69f::t_5e935b5f440920 157-186
+packages/bcode-browser/src/browser-execute.ts
+  s_0ea552c519f69f::t_11ac7ea2e20a20 52,78-79,191,252-255,257
+  s_0ea552c519f69f::t_eb3ac86cdab332 185,256,259
+packages/bcode-browser/src/jev-snapshot.txt
+  s_0ea552c519f69f::t_2938f2cd4828e8 1-217
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2596c49edd273af946582f90270a6e3b66680e4a",
+  "prompts": {},
+  "sessions": {
+    "s_0ea552c519f69f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ac09-948b-7802-983a-311e52c6ad99",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

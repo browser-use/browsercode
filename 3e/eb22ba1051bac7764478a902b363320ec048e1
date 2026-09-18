@@ -1,0 +1,22 @@
+packages/bcode-browser/src/skills.ts
+  s_0ea552c519f69f::t_5052a75fe73a2f 48,54-57,59-60
+  s_0ea552c519f69f::t_81d318e26c28bb 58
+packages/bcode-browser/test/skills.test.ts
+  s_0ea552c519f69f::t_d5b0c5c1d8bd0f 12-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3eeb22ba1051bac7764478a902b363320ec048e1",
+  "prompts": {},
+  "sessions": {
+    "s_0ea552c519f69f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ac09-948b-7802-983a-311e52c6ad99",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

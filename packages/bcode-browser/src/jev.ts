@@ -52,12 +52,15 @@ type Usage = { input_tokens?: number; [key: string]: unknown }
 const active = new WeakSet<Session>()
 const allowed = new Set(["click", "fill", "select", "set_value", "scroll_to", "scroll", "key", "wait"])
 
-export const instructions = `Optional fast interaction helper: within browser_execute, call
+export const instructions = `Fast interaction helper available: for routine UI sequences, prefer a short Jev burst
+before writing manual click/fill loops. Within browser_execute, call
 await jev({goal:"Set one-way and Zurich to London",values:{origin:"Zurich",destination:"London"},maxActions:8,timeoutMs:10000}).
-It uses the already attached page; first connect and session.use(targetId) normally. Delegate short sequences of UI
+It uses the already attached page; first connect and session.use(targetId) normally. You may pass the immediate
+objective before inspecting individual target nodes: Jev observes the page itself. Delegate short sequences of UI
 clicks, text entry, native selects/dates and scrolling. Pass exact field values or search text in values; Jev cannot
 invent text. Prefer a burst when you would otherwise need several observe/LLM turns; use direct CDP for known targets,
-bulk extraction, file uploads, research and complex controls. Do not run it concurrently with other page mutations.
+bulk extraction, file uploads, research and complex controls. Complete supported fields with Jev even if an upload
+later needs direct CDP. Do not run it concurrently with other page mutations.
 It returns the action log, final observed state and a screenshot. A subgoal_reached status is Jev's claim only;
 verify actual results yourself. On needs_help, timeout or no_progress, recover with direct browser_execute.
 The overall task and final answer remain your responsibility. Never offload the entire research task.`

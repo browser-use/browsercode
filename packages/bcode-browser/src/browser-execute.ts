@@ -75,8 +75,8 @@ const timeoutOutput = (output: string) => {
 export const parameters = Schema.Struct({
   code: Schema.String.annotate({
     description:
-      "The JavaScript snippet to execute. `session` (CDP Session) and `console` are in scope; see the `browser-execute` skill for the snippet model." +
-      (process.env.BCODE_JEV === "1" ? "\n" + instructions : ""),
+      (process.env.BCODE_JEV === "1" ? instructions + "\n" : "") +
+      "The JavaScript snippet to execute. `session` (CDP Session) and `console` are in scope; see the `browser-execute` skill for the snippet model.",
   }),
   timeout: Schema.optional(Schema.Number).annotate({
     description: `Optional timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS})`,

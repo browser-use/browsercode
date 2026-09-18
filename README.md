@@ -106,6 +106,28 @@ We turned browser interaction into a coding problem; the agent writes JavaScript
 
 ## Architecture
 
+### Experimental Jev interaction bursts
+
+On `codex/jev-interaction`, set `BCODE_JEV=1` and `TYPESAFE_API_KEY` to expose an optional helper inside
+`browser_execute`. It uses the attached tab and existing CDP connection:
+
+```js
+const result = await jev({
+  goal: "Set one-way and search Zurich to London",
+  values: { origin: "Zurich", destination: "London" },
+  maxActions: 8,
+  timeoutMs: 10000,
+})
+console.log(result)
+```
+
+BrowserCode supplies the text and handles research, extraction, unsupported controls, recovery and final verification.
+Jev chooses indexed operation/target/value pairs. The helper returns observations, action logs, costs and a screenshot;
+`subgoal_reached` is explicitly an unverified claim. A burst stops on stale targets, missing values, no progress or its
+budget. Mutations are never retried. Set `BCODE_JEV_LOG` for a JSONL burst log and an adjacent `.calls` request ledger.
+Post-burst evidence capture is additional to the interaction time budget. Do not mutate the same page concurrently.
+Default behavior is unchanged when the flag is absent. Speed, cost and reliability are under evaluation.
+
 BrowserCode is a fork of [OpenCode](https://github.com/anomalyco/opencode) with a vendored TypeScript port of [Browser Harness](https://github.com/browser-use/browser-harness).
 
 It adds one core browser primitive:

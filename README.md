@@ -126,7 +126,14 @@ Jev chooses indexed operation/target/value pairs. The helper returns observation
 `subgoal_reached` is explicitly an unverified claim. A burst stops on stale targets, missing values, no progress or its
 budget. Mutations are never retried. Set `BCODE_JEV_LOG` for a JSONL burst log and an adjacent `.calls` request ledger.
 Post-burst evidence capture is additional to the interaction time budget. Do not mutate the same page concurrently.
-Default behavior is unchanged when the flag is absent. Speed, cost and reliability are under evaluation.
+Default behavior is unchanged when the flag is absent.
+
+The [frozen 20-task comparison](https://github.com/browser-use/new-eval-platform/blob/codex/jev-bcode-comparison/docs/jev-bcode-results.md)
+found 17/20 supported completions for BrowserCode and 16/20 with Jev. The paired candidate/baseline latency ratio
+was 1.073x (95% interval 0.593–1.284); reported model cost was 1.496x on 17 matched pairs without known telemetry
+gaps. Research-subagent costs are missing from full totals. Jev ran on only 3/20 tasks, so this does not isolate its
+execution effect or establish a speed/cost improvement. Keep the helper experimental: the evaluated build can select
+a different native-select value from the one supplied by the caller. BrowserCode must verify the actual value.
 
 BrowserCode is a fork of [OpenCode](https://github.com/anomalyco/opencode) with a vendored TypeScript port of [Browser Harness](https://github.com/browser-use/browser-harness).
 

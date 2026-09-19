@@ -2,11 +2,13 @@ import { z } from "zod"
 
 export const actorInstructions = `A small fast model can execute short UI subgoals in the attached tab.
 Inside browser_execute, use return await actor({goal:"Search one-way Zurich to London",values:{origin:"Zurich",destination:"London",trip:"One way"},maxActions:8,timeoutMs:20000}).
-Use actor for a sequence whose next target depends on the preceding UI result: autocomplete, search filters,
-dropdowns or multi-field forms. Give it the precise immediate goal, all exact values, and explicit stop conditions.
+For routine multi-step UI interaction, prefer an actor burst before manually inspecting every target or writing
+click/fill loops. This includes autocomplete, search filters, dropdowns and multi-field forms. Give the precise
+immediate goal, all exact values and explicit stop conditions. Let actor complete supported fields even when an
+upload must be handled afterward with direct CDP.
 It observes the page and returns observed fields, visible text, an action log and a screenshot to you.
-Connect and attach the tab normally first. Run only one mutation sequence at a time. For known targets,
-deterministic bulk operations, extraction, research, uploads or complex controls, use direct CDP.
+Connect and attach the tab normally first. Run only one mutation sequence at a time. Use direct CDP for single
+known-target actions, bulk extraction, research, uploads and unsupported complex controls.
 The actor cannot invent text, generate code, switch tabs or take over the overall task.
 Treat subgoal_reached as an unverified claim. Verify the requested values and visible result yourself.
 On timeout, stale_page, needs_help or no_progress, inspect its returned evidence and recover directly;

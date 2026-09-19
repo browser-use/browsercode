@@ -10,6 +10,14 @@ There is no helper namespace, just `session`, `console`, and standard JS globals
 Workspace: `<projectRoot>/.bcode/agent-workspace/`. Read/write your reusable scripts here.
 Skills: `{{SKILLS_DIR}}/`. Read-only browser execute reference docs.
 
+## Research evidence
+
+Save extracted records and their actual source URL, observation time, active filters, and displayed order as you collect them. Build deliverables from those saved records, not memory. Preserve the full requested sequence before filtering or deduplicating; retain unknown fields as unknown.
+
+Keep these states distinct: observed, attempted but blocked, and not checked. A blocked page does not establish that other records were checked or blocked. Cite the endpoint actually read; a related canonical page is only a reference until visited. Keep source facts separate from calculations and inferences.
+
+Before finishing, reconcile requested coverage against saved evidence. Check exact output fields, counts, formulas, and claims of completion. Report remaining gaps precisely.
+
 ## Connecting
 In Browser Use Cloud API V4, `browser_execute` automatically connects and attaches the existing page once when the fresh run first uses this tool; do not call `session.connect()` or `session.use()` before driving it.
 Otherwise, call `session.connect(...)` once at the start of your work. There are three connection methods:

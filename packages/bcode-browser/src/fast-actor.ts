@@ -2,8 +2,9 @@ import { z } from "zod"
 
 export const actorInstructions = `A small fast model can execute short UI subgoals in the attached tab.
 Inside browser_execute, use return await actor({goal:"Search one-way Zurich to London",values:{origin:"Zurich",destination:"London",trip:"One way"},maxActions:8,timeoutMs:20000}).
-For routine multi-step UI interaction, prefer an actor burst before manually inspecting every target or writing
-click/fill loops. This includes autocomplete, search filters, dropdowns and multi-field forms. Give the precise
+For a subgoal that fills two or more fields or changes two or more controls, first call actor once for the
+supported portion before writing a manual interaction loop. This is the delegation policy for this run; do not
+skip it just because you can inspect and fill the DOM yourself. Recover directly if the burst fails. Give the precise
 immediate goal, all exact values and explicit stop conditions. Let actor complete supported fields even when an
 upload must be handled afterward with direct CDP.
 It observes the page and returns observed fields, visible text, an action log and a screenshot to you.

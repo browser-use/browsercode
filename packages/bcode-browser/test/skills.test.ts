@@ -70,3 +70,32 @@ test("different dataDirs get their own substituted paths", async () => {
     await fs.rm(b, { recursive: true, force: true })
   }
 })
+
+
+test("actor instructions and executable scope are gated together", async () => {
+  const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "bcode-actor-skill-"))
+  try {
+    for (const model of ["", "qwen/qwen3.5-9b", ""]) {
+      const proc = Bun.spawn([process.execPath, "--eval", `
+        import { Effect } from "effect";
+        import { BrowserExecute } from ${JSON.stringify(path.resolve(import.meta.dir, "../src/browser-execute.ts"))};
+        const result = await Effect.runPromise(Effect.gen(function* () {
+          const tool = yield* BrowserExecute.make(${JSON.stringify(dataDir)});
+          return yield* tool.execute({code:"return typeof actor",description:"Check scope"},
+            {sessionID:"actor-scope-test",workspaceDir:${JSON.stringify(dataDir)}});
+        }));
+        console.log(result.result);
+      `], { env: { ...process.env, BCODE_JEV: "0", BCODE_ACTOR_MODEL: model, BCODE_CDP_URL: "" }, stdout: "pipe", stderr: "pipe" })
+      const output = await new Response(proc.stdout).text()
+      const error = await new Response(proc.stderr).text()
+      expect(error).toBe("")
+      expect(await proc.exited).toBe(0)
+      expect(JSON.parse(output)).toBe(model ? "function" : "undefined")
+      const skill = await Bun.file(path.join(dataDir, "skills/browser-execute/SKILL.md")).text()
+      expect(skill.includes("await actor(")).toBe(!!model)
+      expect(skill.includes("There is no helper namespace")).toBe(!model)
+    }
+  } finally {
+    await fs.rm(dataDir, { recursive: true, force: true })
+  }
+})

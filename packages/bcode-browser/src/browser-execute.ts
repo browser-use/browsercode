@@ -50,6 +50,7 @@ import { withSessionExecution } from "./cdp/session"
 import { SessionStore } from "./session-store"
 import { Skills } from "./skills"
 import { instructions } from "./jev"
+import { actorInstructions } from "./fast-actor"
 
 const DEFAULT_TIMEOUT_MS = 60 * 1000
 const MAX_TIMEOUT_MS = 10 * 60 * 1000
@@ -75,7 +76,7 @@ const timeoutOutput = (output: string) => {
 export const parameters = Schema.Struct({
   code: Schema.String.annotate({
     description:
-      (process.env.BCODE_JEV === "1" ? instructions + "\n" : "") +
+      (process.env.BCODE_ACTOR_MODEL ? actorInstructions + "\n" : process.env.BCODE_JEV === "1" ? instructions + "\n" : "") +
       "The JavaScript snippet to execute. `session` (CDP Session) and `console` are in scope; see the `browser-execute` skill for the snippet model.",
   }),
   timeout: Schema.optional(Schema.Number).annotate({
@@ -188,7 +189,7 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
       yield* Effect.promise(() => fs.mkdir(ctx.workspaceDir, { recursive: true }))
 
       const wrapped = yield* Effect.try({
-        try: () => new AsyncFunction("session", "console", ...(process.env.BCODE_JEV === "1" ? ["jev"] : []), args.code),
+        try: () => new AsyncFunction("session", "console", ...(process.env.BCODE_ACTOR_MODEL ? ["actor"] : process.env.BCODE_JEV === "1" ? ["jev"] : []), args.code),
         catch: (err) => new Error(`syntax error in browser_execute snippet: ${err}`),
       })
 
@@ -250,10 +251,13 @@ export const make = Effect.fn("BrowserExecute.make")(function* (dataDir: string)
 
       const ran = yield* Effect.tryPromise({
         try: () => withSessionExecution(sessionExecution, () => wrapped(session, snippetConsole,
-          process.env.BCODE_JEV === "1" ? async (input: unknown) => {
+          (process.env.BCODE_ACTOR_MODEL || process.env.BCODE_JEV === "1") ? async (input: unknown) => {
             const { interact } = await import("./jev")
             return interact(session, input, { isActive: () => sessionExecution.active,
-              signal: jevAbort.signal, apiKey: process.env.TYPESAFE_API_KEY ?? "", logPath: process.env.BCODE_JEV_LOG })
+              signal: jevAbort.signal,
+              actorModel: process.env.BCODE_ACTOR_MODEL,
+              apiKey: (process.env.BCODE_ACTOR_MODEL ? process.env.OPENROUTER_API_KEY : process.env.TYPESAFE_API_KEY) ?? "",
+              logPath: process.env.BCODE_ACTOR_MODEL ? process.env.BCODE_ACTOR_LOG : process.env.BCODE_JEV_LOG })
           } : undefined)),
         catch: (err) => new Error(`browser_execute snippet threw: ${err instanceof Error ? err.stack ?? err.message : String(err)}`),
       }).pipe(Effect.ensuring(Effect.sync(() => { unsubscribe(); jevAbort.abort() })))

@@ -24,6 +24,7 @@ type Action = {
   label: string
   node?: number
   value?: string
+  current_value?: string
   input_type?: string
   context?: string
   required?: boolean
@@ -108,10 +109,11 @@ export async function interact(
     logPath?: string
     apiKey: string
     apiUrl?: string
+    actorModel?: string
   },
 ) {
   const args = argumentsSchema.parse(input)
-  if (!options.apiKey) throw new Error("Jev requires TYPESAFE_API_KEY")
+  if (!options.apiKey) throw new Error(options.actorModel ? "Actor requires OPENROUTER_API_KEY" : "Jev requires TYPESAFE_API_KEY")
   if (active.has(session)) throw new Error("A Jev burst already owns this session")
   const sessionId = session.getActiveSession()
   if (!session.isConnected() || !sessionId) throw new Error("Connect and attach a page before calling jev")
@@ -124,6 +126,9 @@ export async function interact(
     usage: Usage | null
     cost_usd: number | null
     choice?: string
+    generation_id?: string
+    resolved_model?: string
+    provider?: string
     error?: string
   }[] = []
   let page: Page | null = null
@@ -171,7 +176,7 @@ export async function interact(
             operation: action.kind,
             target: action.label,
             role: action.role,
-            current_value: action.value,
+            current_value: action.current_value ?? action.value,
             context: action.context?.slice(0, 160),
             input_type: action.input_type,
             required: action.required,
@@ -191,6 +196,7 @@ export async function interact(
         model: "jev-latest",
         state: {
           goal: args.goal,
+          ...(options.actorModel ? { values: args.values } : {}),
           page: {
             url: page.url,
             title: page.title,
@@ -220,24 +226,38 @@ export async function interact(
       const callId = `${burstId}:${calls.length}`
       await journal({ id: callId, event: "started" })
       try {
-        const response = await fetch(options.apiUrl ?? "https://api.typesafe.ai/v1/systemone", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${options.apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify(request),
-          signal: AbortSignal.any([
-            AbortSignal.timeout(Math.max(1, Math.ceil(deadline - performance.now()))),
-            ...(options.signal ? [options.signal] : []),
-          ]),
-        })
-        if (!response.ok) throw new Error(`Jev HTTP ${response.status}; no action executed`)
-        const result = (await response.json()) as { answers?: { action?: unknown }; usage?: Usage }
-        record.usage = result.usage ?? null
-        record.cost_usd =
-          typeof result.usage?.input_tokens === "number" && result.usage.input_tokens >= 0
-            ? (result.usage.input_tokens * 0.042) / 1e6
-            : null
-        const answer = validateChoice(result.answers?.action, Object.keys(criteria))
-        record.choice = answer.choice
+        const signal = AbortSignal.any([
+          AbortSignal.timeout(Math.max(1, Math.ceil(deadline - performance.now()))),
+          ...(options.signal ? [options.signal] : []),
+        ])
+        if (options.actorModel) {
+          const { predict, choice } = await import("./fast-actor")
+          const result = await predict({ model: options.actorModel, apiKey: options.apiKey,
+            apiUrl: options.apiUrl, signal, state: request.state, criteria })
+          record.usage = result.usage
+          record.cost_usd = result.cost_usd
+          record.generation_id = result.generation_id
+          record.resolved_model = result.resolved_model
+          record.provider = result.provider
+          record.choice = choice(result.content, Object.keys(criteria))
+        }
+        if (!options.actorModel) {
+          const response = await fetch(options.apiUrl ?? "https://api.typesafe.ai/v1/systemone", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${options.apiKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+            signal,
+          })
+          if (!response.ok) throw new Error(`Jev HTTP ${response.status}; no action executed`)
+          const result = (await response.json()) as { answers?: { action?: unknown }; usage?: Usage }
+          record.usage = result.usage ?? null
+          record.cost_usd =
+            typeof result.usage?.input_tokens === "number" && result.usage.input_tokens >= 0
+              ? (result.usage.input_tokens * 0.042) / 1e6
+              : null
+          const answer = validateChoice(result.answers?.action, Object.keys(criteria))
+          record.choice = answer.choice
+        }
       } catch (err) {
         record.error = err instanceof Error ? err.name : "request_error"
         throw err
@@ -304,6 +324,7 @@ export async function interact(
   }
   const result = {
     burst_id: burstId,
+    model: options.actorModel ?? "jev-latest",
     status,
     error,
     verified: false,

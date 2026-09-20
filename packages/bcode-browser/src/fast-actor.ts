@@ -5,11 +5,14 @@ Inside browser_execute, use return await actor({goal:"Search one-way Zurich to L
 For a subgoal that fills two or more fields or changes two or more controls, first call actor once for the
 supported portion before writing a manual interaction loop. This is the delegation policy for this run; do not
 skip it just because you can inspect and fill the DOM yourself. Recover directly if the burst fails. Give the precise
-immediate goal, all exact values and explicit stop conditions. Let actor complete supported fields even when an
-upload must be handled afterward with direct CDP.
+immediate goal, all exact values and explicit stop conditions. For uploads, provide files:{attachment:{name:"sample.txt",
+type:"text/plain",base64:Buffer.from("Sample file contents","utf8").toString("base64")}}. The actor uploads these exact bytes in the remote page;
+do not give it local filesystem paths. For a generated test file you can pass the content inline without creating a
+local file first. Supply at most four files, each at most 1 MiB. The actor sees file names, types and sizes, not the supplied base64 payload.
+Include filling fields, uploading and submitting in one goal when the task authorizes submission; verify its result.
 It observes the page and returns observed fields, visible text, an action log and a screenshot to you.
 Connect and attach the tab normally first. Run only one mutation sequence at a time. Use direct CDP for single
-known-target actions, bulk extraction, research, uploads and unsupported complex controls.
+known-target actions, bulk extraction, research and unsupported complex controls.
 The actor cannot invent text, generate code, switch tabs or take over the overall task.
 Treat subgoal_reached as an unverified claim. Verify the requested values and visible result yourself.
 On timeout, stale_page, needs_help or no_progress, inspect its returned evidence and recover directly;

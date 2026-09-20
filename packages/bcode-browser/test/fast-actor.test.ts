@@ -23,7 +23,7 @@ const session = new Session()
 type Criteria = Record<string, { operation?: string; target?: string; current_value?: string }>
 let provider: ReturnType<typeof Bun.serve>
 let target: string
-let response: (criteria: Criteria, state: { values: Record<string, string> }) => Promise<string> | string
+let response: (criteria: Criteria, state: { values: Record<string, string>; files: Record<string, { name: string; type: string; size: number }> }) => Promise<string> | string
 let requests = 0
 let mode = "normal"
 
@@ -68,7 +68,7 @@ afterAll(async () => {
 
 async function js(expression: string) {
   return (
-    (await session._call("Runtime.evaluate", { expression, returnByValue: true })) as { result: { value: unknown } }
+    (await session._call("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true })) as { result: { value: unknown } }
   ).result.value
 }
 async function fixture(html: string) {
@@ -231,4 +231,35 @@ test.skipIf(!enabled)("repeated navigation context does not crowd out the form a
     return "NEED_HELP"
   }
   await run({ goal: "Fill email and choose Dark", values: { email: "alex@example.com", theme: "Dark" } })
+})
+
+
+for (const frame of [false, true]) test.skipIf(!enabled)(`inline file bytes reach the ${frame ? "iframe" : "page"} without entering the model prompt`, async () => {
+  const text = "Résumé 漢字\nCaller-supplied bytes"
+  const base64 = Buffer.from(text, "utf8").toString("base64")
+  const html = '<label>Document<input id="upload" type="file" onchange="document.body.dataset.changed=1"></label>'
+  await fixture(frame ? `<iframe srcdoc="${html.replaceAll('"', '&quot;')}"></iframe>` : html)
+  if (frame) await Bun.sleep(100)
+  response = (criteria, state) => {
+    expect(state.files.document).toEqual({ name: "文档.txt", type: "text/plain", size: Buffer.byteLength(text) })
+    expect(JSON.stringify({ criteria, state })).not.toContain(base64)
+    expect(JSON.stringify({ criteria, state })).not.toContain(text)
+    return requests === 1 ? Object.keys(criteria).find((id) => criteria[id].operation === "upload")! : "SUBGOAL_REACHED"
+  }
+  const result = await run({ goal: "Upload document; stop before submitting", files: { document: { name: "文档.txt", type: "text/plain", base64 } } })
+  expect(result.status).toBe("subgoal_reached")
+  expect(result.actions).toHaveLength(1)
+  expect(result.actions[0].kind).toBe("upload")
+  expect(JSON.stringify(result)).not.toContain(base64)
+  expect(await js(`(async()=>{const doc=${frame ? "document.querySelector('iframe').contentDocument" : "document"};const file=doc.querySelector('input').files[0];return {name:file.name,type:file.type,text:await file.text(),changed:doc.body.dataset.changed}})()`))
+    .toEqual({ name: "文档.txt", type: "text/plain", text, changed: "1" })
+})
+
+test.skipIf(!enabled)("bad file encoding and oversized files fail before inference or mutation", async () => {
+  await fixture('<label>Document<input id="upload" type="file"></label>')
+  response = () => "SUBGOAL_REACHED"
+  for (const base64 of ["not base64!", "YQ", Buffer.alloc(1_048_577).toString("base64")])
+    await expect(run({ goal: "Upload", files: { document: { name: "test.txt", type: "text/plain", base64 } } })).rejects.toThrow()
+  expect(requests).toBe(0)
+  expect(await js("document.querySelector('input').files.length")).toBe(0)
 })

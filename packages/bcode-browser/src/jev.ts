@@ -4,6 +4,16 @@ import { z } from "zod"
 import { Session } from "./cdp/session"
 import snapshot from "./jev-snapshot.txt"
 
+const fileSchema = z.object({
+  name: z.string().min(1).max(255),
+  type: z.string().min(1).max(128),
+  base64: z.string().max(1_398_104).refine(
+    (value) => Buffer.from(value, "base64").toString("base64") === value && Buffer.from(value, "base64").length <= 1_048_576,
+    "File bytes must be canonical base64 (at most 1 MiB)",
+  ),
+}).strict()
+type Upload = z.infer<typeof fileSchema>
+
 // Snapshot copied byte-for-byte from jev-ultrafast 46e3cbc9c65d99bb714d4f9174e1daef4cd59d84.
 // This helper borrows the existing CDP session. It never creates, closes or switches a tab.
 const argumentsSchema = z
@@ -13,6 +23,8 @@ const argumentsSchema = z
       .record(z.string().max(100), z.string().max(2000))
       .default({})
       .refine((v) => Object.keys(v).length <= 16, "Supply at most 16 named values"),
+    files: z.record(z.string().max(100), fileSchema).default({})
+      .refine((files) => Object.keys(files).length <= 4, "Supply at most four files"),
     maxActions: z.number().int().min(1).max(16).default(8),
     timeoutMs: z.number().int().min(100).max(20000).default(10000),
   })
@@ -34,6 +46,7 @@ type Action = {
   role?: string
   delta?: number
   key?: string
+  file?: Upload
   text?: string
 }
 type Page = {
@@ -69,9 +82,14 @@ It returns the action log, final observed state and a screenshot. A subgoal_reac
 verify actual results yourself. On needs_help, timeout or no_progress, recover with direct browser_execute.
 The overall task and final answer remain your responsibility. Never offload the entire research task.`
 
-export function choices(page: Page, values: Record<string, string>) {
+export function choices(page: Page, values: Record<string, string>, files: Record<string, Upload> = {}) {
   const menu: Record<string, Action> = {}
   for (const action of page.actions) {
+    if (action.kind === "upload") {
+      for (const [i, [label, file]] of Object.entries(files).entries())
+        menu[`${action.id}:f${i}`] = { ...action, file, label: `${action.label} ← ${label}: ${file.name} (${file.type})` }
+      continue
+    }
     if (!allowed.has(action.kind)) continue
     if (action.kind === "fill" || action.kind === "set_value") {
       for (const [i, [label, text]] of Object.entries(values).entries()) {
@@ -116,6 +134,7 @@ export async function interact(
   },
 ) {
   const args = argumentsSchema.parse(input)
+  if (!options.actorModel && Object.keys(args.files).length) throw new Error("Inline files require the actor")
   if (!options.apiKey) throw new Error(options.actorModel ? "Actor requires OPENROUTER_API_KEY" : "Jev requires TYPESAFE_API_KEY")
   if (active.has(session)) throw new Error("A Jev burst already owns this session")
   const sessionId = session.getActiveSession()
@@ -171,7 +190,7 @@ export async function interact(
         page = await observe()
         continue
       }
-      const menu = choices(page, args.values)
+      const menu = choices(page, args.values, args.files)
       const criteria: Record<string, unknown> = Object.fromEntries(
         Object.entries(menu).map(([id, action]) => [
           id,
@@ -200,7 +219,12 @@ export async function interact(
         model: "jev-latest",
         state: {
           goal: args.goal,
-          ...(options.actorModel ? { values: args.values } : {}),
+          ...(options.actorModel ? {
+            values: args.values,
+            files: Object.fromEntries(Object.entries(args.files).map(([key, file]) => [key, {
+              name: file.name, type: file.type, size: Buffer.from(file.base64, "base64").length,
+            }])),
+          } : {}),
           page: {
             url: page.url,
             title: page.title,
@@ -383,6 +407,15 @@ async function execute(
     const g=c.geometry(e);if(!g?.within)return null;
     if((a.kind==='fill'||a.kind==='set_value')&&(e.readOnly||e.getAttribute('aria-readonly')==='true'))return null;
     const win=e.ownerDocument.defaultView;
+    if(a.kind==='upload'){
+      if(e.tagName!=='INPUT'||e.type!=='file'||!a.file)return null;
+      const bytes=Uint8Array.from(atob(a.file.base64),c=>c.charCodeAt(0));
+      const transfer=new win.DataTransfer();
+      transfer.items.add(new win.File([bytes],a.file.name,{type:a.file.type}));
+      e.files=transfer.files;
+      e.dispatchEvent(new win.Event('input',{bubbles:true}));e.dispatchEvent(new win.Event('change',{bubbles:true}));
+      if(e.files.length!==1||e.files[0].name!==a.file.name||e.files[0].size!==bytes.length)return {invalid:true};
+    }
     if(a.kind==='select'){
       if(e.tagName!=='SELECT'||![...e.options].some(o=>o.value===a.value&&!o.disabled&&!o.closest('optgroup[disabled]')))return null;
       Object.getOwnPropertyDescriptor(win.HTMLSelectElement.prototype,'value').set.call(e,a.value);
@@ -397,7 +430,7 @@ async function execute(
     return {x:g.x,y:g.y};
   })(${JSON.stringify(action)})`)) as { x: number; y: number; invalid?: boolean } | null
   if (!target || target.invalid) throw new Error("Target covered, stale or value invalid; inspect before retrying")
-  if (["select", "set_value", "scroll_to"].includes(action.kind)) return
+  if (["select", "set_value", "scroll_to", "upload"].includes(action.kind)) return
   for (const type of ["mousePressed", "mouseReleased"])
     await call("Input.dispatchMouseEvent", {
       type,

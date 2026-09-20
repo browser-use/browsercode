@@ -28,6 +28,9 @@ type Action = {
   input_type?: string
   context?: string
   required?: boolean
+  checked?: string
+  selected?: string
+  expanded?: string
   role?: string
   delta?: number
   key?: string
@@ -177,9 +180,10 @@ export async function interact(
             target: action.label,
             role: action.role,
             current_value: action.current_value ?? action.value,
-            context: action.context?.slice(0, 160),
+            context: action.context?.slice(0, options.actorModel ? 80 : 160),
             input_type: action.input_type,
             required: action.required,
+            ...(options.actorModel ? { checked: action.checked, selected: action.selected, expanded: action.expanded } : {}),
           },
         ]),
       )
@@ -200,7 +204,7 @@ export async function interact(
           page: {
             url: page.url,
             title: page.title,
-            text: page.text.slice(0, 4500),
+            text: page.text.slice(0, options.actorModel ? 1500 : 4500),
             fields: page.fields.slice(0, 30),
             unsupported_frames: page.unsupported_frames,
             omitted_actions: page.omitted_actions + omitted,

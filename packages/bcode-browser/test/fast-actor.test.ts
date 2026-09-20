@@ -209,3 +209,26 @@ test.skipIf(!enabled)("concurrent bursts on one session are rejected", async () 
   expect(await overlap).toBe("rejected")
   expect(requests).toBe(1)
 })
+
+test.skipIf(!enabled)("checkbox state reaches the actor independently of its on value", async () => {
+  await fixture('<label><input type="checkbox" checked>Newsletter</label>')
+  response = (criteria) => {
+    const control = Object.values(criteria).find((action) => action.operation === "click")
+    expect(control).toMatchObject({ current_value: "on", checked: "true" })
+    return "SUBGOAL_REACHED"
+  }
+  const result = await run({ goal: "Leave the newsletter checked" })
+  expect(result.actions).toHaveLength(0)
+  expect(result.status).toBe("subgoal_reached")
+})
+
+test.skipIf(!enabled)("repeated navigation context does not crowd out the form actions", async () => {
+  await fixture('<nav>' + Array.from({ length: 80 }, (_, i) => `<button>Unrelated category ${i}</button>`).join("") +
+    '</nav><label>Email<input type="email"></label><label>Theme<select><option>Light</option><option>Dark</option></select></label>')
+  response = (criteria) => {
+    expect(Object.values(criteria).some((action) => action.operation === "fill" && action.target?.includes("alex@example.com"))).toBe(true)
+    expect(Object.values(criteria).some((action) => action.operation === "select" && action.target?.endsWith("Dark"))).toBe(true)
+    return "NEED_HELP"
+  }
+  await run({ goal: "Fill email and choose Dark", values: { email: "alex@example.com", theme: "Dark" } })
+})

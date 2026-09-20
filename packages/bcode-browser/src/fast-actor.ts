@@ -8,7 +8,7 @@ skip it just because you can inspect and fill the DOM yourself. Recover directly
 immediate goal, all exact values and explicit stop conditions. For uploads, provide files:{attachment:{name:"sample.txt",
 type:"text/plain",base64:Buffer.from("Sample file contents","utf8").toString("base64")}}. The actor uploads these exact bytes in the remote page;
 do not give it local filesystem paths. For a generated test file you can pass the content inline without creating a
-local file first. Supply at most four files, each at most 1 MiB. The actor sees file names, types and sizes, not the supplied base64 payload.
+local file first. Bounds: maxActions <= 16, timeoutMs <= 20000, at most four files of 1 MiB each. The actor sees file names, types and sizes, not the supplied base64 payload.
 Include filling fields, uploading and submitting in one goal when the task authorizes submission; verify its result.
 It observes the page and returns observed fields, visible text, an action log and a screenshot to you.
 Connect and attach the tab normally first. Run only one mutation sequence at a time. Use direct CDP for single
@@ -77,7 +77,8 @@ export async function predict(input: {
             "including values for selects. Before acting, check all needed text values were supplied; if any are missing, " +
             "return NEED_HELP immediately without clicking anything. checked is the checkbox state; value is NOT its state. " +
             "Do not refill satisfied fields or toggle satisfied settings. Select the " +
-            "matching suggestion after typing. Return SUBGOAL_REACHED only when the goal is visibly reached; " +
+            "matching suggestion after typing. Once a requested submission visibly succeeds, immediately return " +
+            "SUBGOAL_REACHED; never change the submitted fields afterward. Return SUBGOAL_REACHED only when the goal is visibly reached; " +
             "NEED_HELP for missing values, unsupported controls, ambiguity or repeated errors. Do not exceed the " +
             "goal's stop condition. Return only the required JSON.",
         },

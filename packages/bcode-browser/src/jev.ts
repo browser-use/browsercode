@@ -320,8 +320,14 @@ export async function interact(
       }
       history.push(entry)
       // A mutation is never retried. If its acknowledgment is lost, the caller must inspect the result.
-      await execute(action, evaluate, call)
+      const submitted = await execute(action, evaluate, call)
       entry.status = "executed"
+      // Submission is a control boundary, not a model judgment. Even rejected
+      // validation returns to the parent before another mutation can occur.
+      if (options.actorModel && submitted) {
+        status = "submission_attempted"
+        break
+      }
       await Bun.sleep(action.kind === "wait" ? 120 : action.kind === "fill" ? 100 : 25)
       page = await observe()
       repeats = page && JSON.stringify(page.marker) === before ? repeats + 1 : 0
@@ -394,7 +400,7 @@ async function execute(
         code: action.key,
         windowsVirtualKeyCode: action.key === "Enter" ? 13 : 27,
       })
-    return
+    return action.key === "Enter"
   }
   if (action.kind === "scroll") {
     await call("Input.dispatchMouseEvent", { type: "mouseWheel", x: 400, y: 300, deltaX: 0, deltaY: action.delta })
@@ -427,8 +433,9 @@ async function execute(
       Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype,'value').set.call(e,a.text);
       e.dispatchEvent(new win.Event('input',{bubbles:true}));e.dispatchEvent(new win.Event('change',{bubbles:true}));
     }
-    return {x:g.x,y:g.y};
-  })(${JSON.stringify(action)})`)) as { x: number; y: number; invalid?: boolean } | null
+    const button=e.closest('button,input[type="submit"],input[type="image"]');
+    return {x:g.x,y:g.y,submit:!!button?.form&&['submit','image'].includes(button.type)};
+  })(${JSON.stringify(action)})`)) as { x: number; y: number; invalid?: boolean; submit?: boolean } | null
   if (!target || target.invalid) throw new Error("Target covered, stale or value invalid; inspect before retrying")
   if (["select", "set_value", "scroll_to", "upload"].includes(action.kind)) return
   for (const type of ["mousePressed", "mouseReleased"])
@@ -439,7 +446,7 @@ async function execute(
       button: "left",
       clickCount: 1,
     })
-  if (action.kind !== "fill") return
+  if (action.kind !== "fill") return target.submit
   const modifiers = process.platform === "darwin" ? 4 : 2
   for (const type of ["keyDown", "keyUp"])
     await call("Input.dispatchKeyEvent", {

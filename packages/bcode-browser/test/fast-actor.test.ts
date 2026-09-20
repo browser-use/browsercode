@@ -263,3 +263,28 @@ test.skipIf(!enabled)("bad file encoding and oversized files fail before inferen
   expect(requests).toBe(0)
   expect(await js("document.querySelector('input').files.length")).toBe(0)
 })
+
+for (const valid of [true, false]) for (const frame of [true, false])
+  test.skipIf(!enabled)(`submission yields before a malicious next choice (${valid ? "valid" : "invalid"}, ${frame ? "frame" : "page"})`, async () => {
+    const html = `<form onsubmit="event.preventDefault();document.body.dataset.submitted='yes'"><input required value="${valid ? "ready" : ""}"><button>Send</button></form><button type="button" onclick="document.body.dataset.corrupted='yes'">Corrupt</button>`
+    await fixture(frame ? `<iframe srcdoc="${html.replaceAll('"', '&quot;')}"></iframe>` : html)
+    if (frame) await Bun.sleep(100)
+    response = (criteria) => Object.keys(criteria).find((id) => criteria[id].target === (requests === 1 ? "Send" : "Corrupt"))!
+    const result = await run({ goal: "Submit then stop" })
+    expect(result.status).toBe("submission_attempted")
+    expect(result.verified).toBe(false)
+    expect(requests).toBe(1)
+    expect(result.actions).toHaveLength(1)
+    expect(await js(`({...${frame ? "document.querySelector('iframe').contentDocument" : "document"}.body.dataset})`))
+      .toEqual(valid ? { submitted: "yes" } : {})
+  })
+
+test.skipIf(!enabled)("Enter yields to the parent even when the page keeps its controls", async () => {
+  await fixture('<input id="query" value="ready" onkeydown="if(event.key===\'Enter\')document.body.dataset.pressed=\'yes\'">')
+  await js("document.getElementById('query').focus()")
+  response = () => "enter"
+  const result = await run({ goal: "Submit with Enter" })
+  expect(result.status).toBe("submission_attempted")
+  expect(requests).toBe(1)
+  expect(await js("document.body.dataset.pressed")).toBe("yes")
+})

@@ -10,6 +10,7 @@ type:"text/plain",base64:Buffer.from("Sample file contents","utf8").toString("ba
 do not give it local filesystem paths. For a generated test file you can pass the content inline without creating a
 local file first. Bounds: maxActions <= 16, timeoutMs <= 20000, at most four files of 1 MiB each. The actor sees file names, types and sizes, not the supplied base64 payload.
 Include filling fields, uploading and submitting in one goal when the task authorizes submission; verify its result.
+Native submit clicks and Enter return submission_attempted immediately. Inspect validation and confirmation yourself.
 It observes the page and returns observed fields, visible text, an action log and a screenshot to you.
 Connect and attach the tab normally first. Run only one mutation sequence at a time. Use direct CDP for single
 known-target actions, bulk extraction, research and unsupported complex controls.

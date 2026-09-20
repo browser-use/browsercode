@@ -1,0 +1,19 @@
+packages/bcode-browser/skills/browser-execute/SKILL.md
+  s_29604ef0f42b6d::t_031daada9e7b0c 107-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b97b964e13d0a02692a7aadafa5dea7af447e53f",
+  "prompts": {},
+  "sessions": {
+    "s_29604ef0f42b6d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ba40-60eb-7e21-b8ea-f6bc51ff9d3a",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

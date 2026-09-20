@@ -104,6 +104,10 @@ Not a method you choose — a way for the user to hand you a pre-set endpoint.
 When `V4_RUN_ID` and `BU_CDP_WS` (or its alias `BU_CDP_URL`) are both set, `browser_execute` connects to that endpoint and attaches its existing non-internal page once before the first snippet. Go straight to driving it. Other environments keep the explicit connection flow, and explicit `{ wsUrl }` / `{ profileDir }` calls still connect to the requested endpoint instead.
 If that fixed endpoint closes or repeatedly fails its WebSocket upgrade, reconnecting to the same URL cannot recover it; the endpoint owner must replace it.
 
+## Uploading files to a remote browser
+
+`DOM.setFileInputFiles` resolves paths on the Chrome host. A file created on the agent's machine is not present in a cloud browser's filesystem; setting that path can appear to succeed while reading the file later fails. For a remote browser, transfer the actual bytes: read or generate them on the agent side, construct a `File` in the page, put it in a `DataTransfer`, assign its `files` to the real file input, and dispatch bubbling `input` and `change` events. Preserve filename and MIME type, and verify the selected file's name, size and readable contents before submitting. Use a host path only when Chrome actually shares that filesystem.
+
 ## Attaching to a target
 After connecting manually, attach to a page target before driving the browser. A preconfigured endpoint is already attached automatically:
 

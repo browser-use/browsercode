@@ -1,0 +1,21 @@
+packages/bcode-browser/src/fast-actor.ts
+  s_29604ef0f42b6d::t_863c37a4d5e627 60-67,74-76
+packages/bcode-browser/src/jev.ts
+  s_29604ef0f42b6d::t_fe6d832bcadb3c 31-33,183,186,207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "099682751f66775e1e1e89e5bd2966e757673578",
+  "prompts": {},
+  "sessions": {
+    "s_29604ef0f42b6d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ba40-60eb-7e21-b8ea-f6bc51ff9d3a",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

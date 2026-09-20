@@ -1,0 +1,19 @@
+packages/bcode-browser/test/fast-actor.test.ts
+  s_29604ef0f42b6d::t_e4fe264b02b4bd 212-234
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bf124a93cb1e6eab8dcd8f734b9c4ea12e913f64",
+  "prompts": {},
+  "sessions": {
+    "s_29604ef0f42b6d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0ba40-60eb-7e21-b8ea-f6bc51ff9d3a",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

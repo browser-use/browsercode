@@ -14,19 +14,14 @@ import { makeSpanOtelV2Compatible } from "./compat"
 export class LaminarSpanExporter implements SpanExporter {
   private exporter: SpanExporter
 
-  constructor(options: {
-    apiKey: string
-    baseUrl: string
-    port: number
-    timeoutMillis?: number
-  }) {
+  constructor(options: { apiKey: string; baseUrl: string; port: number; timeoutMillis?: number }) {
     const url = options.baseUrl.replace(/\/$/, "").replace(/:\d{1,5}$/g, "")
     const metadata = new Metadata()
     metadata.set("authorization", `Bearer ${options.apiKey}`)
     this.exporter = new ExporterGrpc({
       url: `${url}:${options.port}`,
       metadata,
-      timeoutMillis: options.timeoutMillis ?? 30000,
+      timeoutMillis: options.timeoutMillis ?? 10000,
     })
   }
 
@@ -54,14 +49,9 @@ export class LaminarSpanExporter implements SpanExporter {
 // the runtime never needs LMNR_PROJECT_API_KEY.
 //
 // Default path is unchanged: gRPC to Laminar with bearer auth.
-export const createSpanExporter = (
-  laminar: { apiKey: string; baseUrl: string; port: number },
-): SpanExporter => {
-  if (
-    process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ||
-    process.env.OTEL_EXPORTER_OTLP_ENDPOINT
-  ) {
-    return new ExporterHttpProto()
+export const createSpanExporter = (laminar: { apiKey: string; baseUrl: string; port: number }): SpanExporter => {
+  if (process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
+    return new ExporterHttpProto({ timeoutMillis: 10000 })
   }
   return new LaminarSpanExporter(laminar)
 }

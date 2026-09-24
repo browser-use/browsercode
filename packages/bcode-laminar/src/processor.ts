@@ -17,7 +17,8 @@
 //  - `pino` logger — opencode plugins log via `client.app.log`; the plugin passes
 //    in a logger callback.
 
-import { type Context, type Span, SpanStatusCode, trace } from "@opentelemetry/api"
+import { type Context, type Span, SpanStatusCode, TraceFlags, trace } from "@opentelemetry/api"
+import { ExportResultCode } from "@opentelemetry/core"
 import {
   BatchSpanProcessor,
   type ReadableSpan,
@@ -34,6 +35,7 @@ import {
   SPAN_SDK_VERSION,
 } from "./attributes"
 import { getParentSpanId, makeSpanOtelV2Compatible, type OTelSpanCompat } from "./compat"
+import { boundedSpan, encodedBytes, QUEUE_BYTES, QUEUE_RECORDS } from "./budget"
 import { sessionCurrentTurnSpan } from "./state"
 import { otelSpanIdToUUID, type StringUUID } from "./utils"
 
@@ -44,16 +46,45 @@ type LogFn = (level: "debug" | "info" | "warn" | "error", message: string) => vo
 
 export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
   private inner: BatchSpanProcessor
+  private pendingBytes = 0
+  private pendingRecords = 0
+  private sizes = new WeakMap<ReadableSpan, number>()
   private readonly spanIdToPath = new Map<string, string[]>()
   private readonly spanIdLists = new Map<string, StringUUID[]>()
   private readonly spawningSpanIdToToolUseId: Record<string, string> = {}
   private readonly log: LogFn
 
   constructor(options: { exporter: SpanExporter; log?: LogFn }) {
-    this.inner = new BatchSpanProcessor(options.exporter, {
-      maxExportBatchSize: 512,
-      exportTimeoutMillis: 30000,
-    })
+    this.inner = new BatchSpanProcessor(
+      {
+        export: (spans, callback) => {
+          let completed = false
+          const finish: typeof callback = (result) => {
+            if (completed) return
+            completed = true
+            for (const span of spans) {
+              this.pendingBytes -= this.sizes.get(span) ?? 0
+              this.pendingRecords--
+              this.sizes.delete(span)
+            }
+            callback(result)
+          }
+          try {
+            options.exporter.export(spans, finish)
+          } catch {
+            finish({ code: ExportResultCode.FAILED, error: new Error("Diagnostic export failed") })
+          }
+        },
+        shutdown: () => options.exporter.shutdown(),
+        forceFlush: () => options.exporter.forceFlush?.() ?? Promise.resolve(),
+      },
+      {
+        // Sixteen 64 KiB records fit in 1 MiB, including each record's OTLP envelope.
+        maxExportBatchSize: 16,
+        maxQueueSize: QUEUE_RECORDS,
+        exportTimeoutMillis: 10000,
+      },
+    )
     this.log = options.log ?? (() => {})
   }
 
@@ -71,9 +102,7 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
     // 1. Re-parent AI-SDK spans onto the live "turn" span for this opencode
     //    session, so each turn becomes its own Laminar trace instead of a
     //    forest of orphan traces.
-    const sessionId = span.attributes?.["ai.telemetry.metadata.sessionId"] as
-      | string
-      | undefined
+    const sessionId = span.attributes?.["ai.telemetry.metadata.sessionId"] as string | undefined
     let ctx = parentContext
     if (sessionId && typeof sessionId === "string") {
       const parentSpanContext = sessionCurrentTurnSpan[sessionId]?.spanContext()
@@ -96,9 +125,7 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
       const toolCallNameAttr = span.attributes?.["ai.toolCall.name"] as string | undefined
       if (
         SPAWNING_TOOL_NAMES.includes(span.name) ||
-        (span.name === "ai.toolCall" &&
-          toolCallNameAttr &&
-          SPAWNING_TOOL_NAMES.includes(toolCallNameAttr))
+        (span.name === "ai.toolCall" && toolCallNameAttr && SPAWNING_TOOL_NAMES.includes(toolCallNameAttr))
       ) {
         this.spawningSpanIdToToolUseId[otelSpanIdToUUID(span.spanContext().spanId)] = toolCallId
       }
@@ -107,16 +134,12 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
     // 3. Stamp Laminar's path attributes. The UI nests by these, NOT by
     //    OTel parentSpanId — must run for every span.
     const parentPathFromAttribute = span.attributes?.[PARENT_SPAN_PATH] as string[] | undefined
-    const parentIdsPathFromAttribute = span.attributes?.[PARENT_SPAN_IDS_PATH] as
-      | StringUUID[]
-      | undefined
+    const parentIdsPathFromAttribute = span.attributes?.[PARENT_SPAN_IDS_PATH] as StringUUID[] | undefined
     const parentSpanId = getParentSpanId(span)
     const parentSpanPath =
-      parentPathFromAttribute ??
-      (parentSpanId !== undefined ? this.spanIdToPath.get(parentSpanId) : undefined)
+      parentPathFromAttribute ?? (parentSpanId !== undefined ? this.spanIdToPath.get(parentSpanId) : undefined)
     const parentSpanIdsPath =
-      parentIdsPathFromAttribute ??
-      (parentSpanId !== undefined ? this.spanIdLists.get(parentSpanId) : [])
+      parentIdsPathFromAttribute ?? (parentSpanId !== undefined ? this.spanIdLists.get(parentSpanId) : [])
 
     const spanId = span.spanContext().spanId
     const spanPath = parentSpanPath ? [...parentSpanPath, span.name] : [span.name]
@@ -143,8 +166,7 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
       if (spawningToolCallSpanId) {
         span.setAttributes({
           "lmnr.spawning_subagent.span_id": spawningToolCallSpanId,
-          "lmnr.spawning_subagent.tool_use_id":
-            this.spawningSpanIdToToolUseId[spawningToolCallSpanId]!,
+          "lmnr.spawning_subagent.tool_use_id": this.spawningSpanIdToToolUseId[spawningToolCallSpanId]!,
         })
       }
     }
@@ -176,6 +198,17 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
     // entries that the descendant scan iterates), not by the raw hex span id.
     delete this.spawningSpanIdToToolUseId[otelSpanIdToUUID(spanId)]
     makeSpanOtelV2Compatible(span)
-    this.inner.onEnd(span)
+    if (!(span.spanContext().traceFlags & TraceFlags.SAMPLED)) return
+    const bounded = boundedSpan(span)
+    const size = bounded ? encodedBytes([bounded]) : 0
+    if (!bounded || this.pendingBytes + size > QUEUE_BYTES || this.pendingRecords >= QUEUE_RECORDS) {
+      this.log("warn", "Diagnostic span dropped: telemetry memory budget")
+      return
+    }
+    makeSpanOtelV2Compatible(bounded)
+    this.sizes.set(bounded, size)
+    this.pendingBytes += size
+    this.pendingRecords++
+    this.inner.onEnd(bounded)
   }
 }

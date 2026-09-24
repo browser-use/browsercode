@@ -24,11 +24,15 @@ function text(value: string): string {
 }
 
 function attributes(source: Attributes, mark: () => void): Attributes {
-  const result: Attributes = {}
+  const result: Attributes = Object.create(null)
   for (const [key, value] of Object.entries(source)) {
+    if (text(key) !== key) {
+      mark()
+      continue
+    }
     if (typeof value === "string") {
-      result[text(key)] = text(value)
-      if (result[text(key)] !== value) mark()
+      result[key] = text(value)
+      if (result[key] !== value) mark()
     } else if (Array.isArray(value)) {
       const values: AttributeValue[] = []
       let remaining = FIELD_BYTES
@@ -43,9 +47,8 @@ function attributes(source: Attributes, mark: () => void): Attributes {
         remaining -= size
         values.push(bounded as AttributeValue)
       }
-      result[text(key)] = values as AttributeValue
-    } else result[text(key)] = value
-    if (text(key) !== key) mark()
+      result[key] = values as AttributeValue
+    } else result[key] = value
   }
   return result
 }

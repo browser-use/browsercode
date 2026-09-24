@@ -132,3 +132,16 @@ for (const status of [200, 413]) {
     }
   })
 }
+
+test("overlong attribute keys cannot overwrite a valid key", async () => {
+  const { provider, tracer, spans } = setup()
+  const key = "x".repeat(16384)
+  const span = tracer.startSpan("keys")
+  span.setAttribute(key, "keep")
+  span.setAttribute(key + "suffix", "overwrite")
+  span.end()
+  await provider.forceFlush()
+  await provider.shutdown()
+  expect(spans[0].attributes[key]).toBe("keep")
+  expect(spans[0].attributes["bcode.telemetry.truncated"]).toBe(true)
+})

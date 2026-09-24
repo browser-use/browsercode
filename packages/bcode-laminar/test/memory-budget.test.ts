@@ -7,7 +7,10 @@ import { OpenCodeLaminarSpanProcessor } from "../src/processor"
 function setup() {
   const batches: ReadableSpan[][] = []
   const exporter: SpanExporter = {
-    export(spans, done) { batches.push([...spans]); done({ code: ExportResultCode.SUCCESS }) },
+    export(spans, done) {
+      batches.push([...spans])
+      done({ code: ExportResultCode.SUCCESS })
+    },
     async shutdown() {},
   }
   const processor = new OpenCodeLaminarSpanProcessor({ exporter })
@@ -41,14 +44,15 @@ describe("diagnostic byte budgets", () => {
   })
   test("red: uploads split at 1 MiB including wire encoding", async () => {
     const ctx = setup()
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 32; i++) {
       const span = ctx.tracer.startSpan(`step-${i}`)
-      span.setAttribute("lmnr.span.input", "x".repeat(15000))
+      for (let j = 0; j < 4; j++) span.setAttribute(`diagnostic.${j}`, "x".repeat(16200))
       span.end()
     }
     await ctx.provider.forceFlush()
     await ctx.provider.shutdown()
-    expect(ctx.batches.flat().length).toBe(100)
+    expect(ctx.batches.flat().length).toBe(32)
+    expect(Math.max(...ctx.batches.map(bytes))).toBeGreaterThan(1000000)
     expect(Math.max(...ctx.batches.map(bytes))).toBeLessThanOrEqual(1024 * 1024)
   })
   test("red: queued diagnostics stay below 4 MiB", async () => {

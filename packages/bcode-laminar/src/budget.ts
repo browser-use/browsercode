@@ -74,7 +74,9 @@ export function boundedSpan(source: ReadableSpan): ReadableSpan | undefined {
     endTime: source.endTime,
     duration: source.duration,
     ended: source.ended,
-    resource: resourceFromAttributes(attributes(source.resource.attributes, mark)),
+    resource: resourceFromAttributes(attributes(source.resource.attributes, mark), {
+      schemaUrl: source.resource.schemaUrl,
+    }),
     instrumentationScope: source.instrumentationScope,
     droppedAttributesCount: source.droppedAttributesCount,
     droppedEventsCount: source.droppedEventsCount,

@@ -62,6 +62,7 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
           const finish: typeof callback = (result) => {
             if (completed) return
             completed = true
+            clearTimeout(timer)
             for (const span of spans) {
               this.pendingBytes -= this.sizes.get(span) ?? 0
               this.pendingRecords--
@@ -69,6 +70,15 @@ export class OpenCodeLaminarSpanProcessor implements SpanProcessor {
             }
             callback(result)
           }
+          // SDK timeout does not invoke the exporter callback; release our budget too.
+          const timer = setTimeout(
+            () =>
+              finish({
+                code: ExportResultCode.FAILED,
+                error: new Error("Diagnostic export timed out"),
+              }),
+            10000,
+          )
           try {
             options.exporter.export(spans, finish)
           } catch {

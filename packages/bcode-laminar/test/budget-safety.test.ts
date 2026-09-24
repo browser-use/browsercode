@@ -4,7 +4,8 @@ import { ExportResultCode, type ExportResult } from "@opentelemetry/core"
 import { BasicTracerProvider, type ReadableSpan } from "@opentelemetry/sdk-trace-base"
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto"
 import { OpenCodeLaminarSpanProcessor } from "../src/processor"
-import { encodedBytes } from "../src/budget"
+import { resourceFromAttributes } from "@opentelemetry/resources"
+import { boundedSpan, encodedBytes } from "../src/budget"
 
 function setup() {
   const spans: ReadableSpan[] = []
@@ -144,4 +145,55 @@ test("overlong attribute keys cannot overwrite a valid key", async () => {
   await provider.shutdown()
   expect(spans[0].attributes[key]).toBe("keep")
   expect(spans[0].attributes["bcode.telemetry.truncated"]).toBe(true)
+})
+
+test("export timeout releases budget and late callbacks cannot release it twice", async () => {
+  const callbacks: ((result: ExportResult) => void)[] = []
+  const processor = new OpenCodeLaminarSpanProcessor({
+    exporter: {
+      export(_items, done) {
+        callbacks.push(done)
+      },
+      async shutdown() {},
+    },
+  })
+  const provider = new BasicTracerProvider({ spanProcessors: [processor] })
+  const tracer = provider.getTracer("timeout")
+  tracer.startSpan("stalled").end()
+  await provider.forceFlush().catch(() => {})
+  await Bun.sleep(50)
+  const state = processor as unknown as { pendingBytes: number; pendingRecords: number }
+  expect(state.pendingRecords).toBe(0)
+  expect(state.pendingBytes).toBe(0)
+  callbacks.shift()!({ code: ExportResultCode.SUCCESS })
+  expect(state.pendingRecords).toBe(0)
+  tracer.startSpan("recovered").end()
+  const recovered = provider.forceFlush()
+  await Bun.sleep(0)
+  callbacks.shift()!({ code: ExportResultCode.SUCCESS })
+  await recovered
+  expect(state.pendingRecords).toBe(0)
+  await provider.shutdown()
+}, 15000)
+
+test("bounded resource keeps its schema URL", async () => {
+  const { provider, tracer, spans } = setup()
+  tracer.startSpan("schema").end()
+  await provider.forceFlush()
+  await provider.shutdown()
+  const source = {
+    ...spans[0],
+    resource: resourceFromAttributes({ service: "test" }, { schemaUrl: "https://opentelemetry.io/schemas/1.24.0" }),
+  }
+  expect(boundedSpan(source)?.resource.schemaUrl).toBe(source.resource.schemaUrl)
+})
+
+test("UTF-8 truncation does not split a surrogate pair at the initial slice", async () => {
+  const { provider, tracer, spans } = setup()
+  const span = tracer.startSpan("unicode")
+  span.setAttribute("text", "x".repeat(16383) + "😺")
+  span.end()
+  await provider.forceFlush()
+  await provider.shutdown()
+  expect(spans[0].attributes.text).toBe("x".repeat(16383))
 })

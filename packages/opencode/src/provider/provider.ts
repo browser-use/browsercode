@@ -1790,6 +1790,22 @@ const layer = Layer.effect(
               return wrapped
             }
           }
+          if (
+            model.api.npm === "@ai-sdk/anthropic" &&
+            typeof options.apiKey === "string" &&
+            typeof baseURL === "string"
+          ) {
+            const languageModel = loaded.languageModel.bind(loaded)
+            loaded.languageModel = (id: string) => {
+              const wrapped = withImageFiles(languageModel(id), {
+                baseURL,
+                apiKey: options.apiKey,
+                fetch: options.fetch,
+              })
+              s.imageFiles.add(wrapped.closeImageFiles)
+              return wrapped
+            }
+          }
           s.sdk.set(key, loaded)
           return loaded as SDK
         }

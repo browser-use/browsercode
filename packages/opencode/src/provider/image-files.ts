@@ -19,9 +19,12 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
   const send = options.fetch ?? fetch
   let scope: string | undefined
   let routeHeaders: Record<string, string> = {}
+  const anthropic = /\/anthropic\/v1\/?$/.test(new URL(options.baseURL).pathname)
   const enabled =
     Boolean(options.apiKey) &&
-    /^\/(?:_v4\/bcode-relay\/[^/]+\/)?api\/v4\/llm\/openai\/v1\/?$/.test(new URL(options.baseURL).pathname)
+    /^\/(?:_v4\/bcode-relay\/[^/]+\/)?api\/v4\/llm\/(?:openai|anthropic)\/v1\/?$/.test(
+      new URL(options.baseURL).pathname,
+    )
 
   async function prepare(params: LanguageModelV3CallOptions): Promise<LanguageModelV3CallOptions> {
     if (!enabled) return params
@@ -114,7 +117,8 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
             })
             if (!response.ok) throw new Error(`Screenshot upload failed (${response.status})`)
             const uploaded = (await response.json()) as Uploaded
-            if (!uploaded.file_id?.startsWith("file-")) throw new Error("Invalid screenshot file ID")
+            if (!uploaded.file_id?.startsWith(anthropic ? "file_" : "file-"))
+              throw new Error("Invalid screenshot file ID")
             if (!(uploaded.expires_at > now() / 1000 + 30)) throw new Error("Screenshot reference expired")
             return uploaded
           })()
@@ -148,7 +152,7 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
                         if (item.type !== "image-data") return item
                         return {
                           type: "image-url" as const,
-                          url: `bu-openai-file:${await upload(item.data, item.mediaType)}`,
+                          url: `bu-${anthropic ? "anthropic" : "openai"}-file:${await upload(item.data, item.mediaType)}`,
                           providerOptions: item.providerOptions,
                         }
                       }),
@@ -169,7 +173,8 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
                 (part.data instanceof URL && part.data.protocol !== "data:")
               )
                 return part
-              return { ...part, data: await upload(part.data, part.mediaType) }
+              const id = await upload(part.data, part.mediaType)
+              return { ...part, data: anthropic ? new URL(`bu-anthropic-file:${id}`) : id }
             }),
           ),
         }
@@ -261,5 +266,25 @@ export function imageFileRequest(init?: RequestInit): RequestInit | undefined {
         }),
       }
     })
+  if (Array.isArray(body.messages)) {
+    const rewrite = (content: Array<Record<string, unknown>>): Array<Record<string, unknown>> =>
+      content.map((part) => {
+        if (part?.type === "tool_result" && Array.isArray(part.content))
+          return { ...part, content: rewrite(part.content) }
+        const source = part?.source as { type?: string; url?: string } | undefined
+        if (part?.type !== "image" || source?.type !== "url" || !source.url?.startsWith("bu-anthropic-file:file_"))
+          return part
+        return { ...part, source: { type: "file", file_id: source.url.slice("bu-anthropic-file:".length) } }
+      })
+    body.messages = body.messages.map((message: Record<string, unknown>) =>
+      Array.isArray(message.content) ? { ...message, content: rewrite(message.content) } : message,
+    )
+    const headers = new Headers(init.headers)
+    headers.set(
+      "anthropic-beta",
+      [...new Set([...(headers.get("anthropic-beta")?.split(",") ?? []), "files-api-2025-04-14"])].join(","),
+    )
+    return { ...init, headers, body: JSON.stringify(body) }
+  }
   return { ...init, body: JSON.stringify(body) }
 }

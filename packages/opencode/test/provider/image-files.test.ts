@@ -303,7 +303,12 @@ function fixture(
     }),
   }).responses("gpt-test")
   const model = withImageFiles(native, { baseURL, apiKey: "v4rt_test", now: () => state.now })
-  return { state, model, stop: () => server.stop(true) }
+  return {
+    state,
+    model,
+    wrap: () => withImageFiles(native, { baseURL, apiKey: "v4rt_test", now: () => state.now }),
+    stop: () => server.stop(true),
+  }
 }
 
 test("unsupported actual route keeps inline behavior", async () => {
@@ -475,6 +480,42 @@ test("expired duplicate references coalesce even with a full 64-image run cache"
     )
     expect(f.state.uploads).toBe(65)
   } finally {
+    f.stop()
+  }
+})
+
+test("transient upload rejection permits a later explicit retry", async () => {
+  const options: { uploadStatus?: number } = { uploadStatus: 503 }
+  const f = fixture(options)
+  try {
+    await expect(f.model.doGenerate({ prompt })).rejects.toThrow("upload failed")
+    expect(f.state.responses).toBe(0)
+    options.uploadStatus = undefined
+    await f.model.doGenerate({ prompt })
+    expect(f.state.uploads).toBe(2)
+    expect(f.state.responses).toBe(1)
+  } finally {
+    await f.model.closeImageFiles()
+    f.stop()
+  }
+})
+
+test("closing one wrapper preserves references owned by a sibling", async () => {
+  const f = fixture()
+  const sibling = f.wrap()
+  try {
+    await f.model.doGenerate({ prompt })
+    await sibling.doGenerate({ prompt })
+    await f.model.closeImageFiles()
+    expect(f.state.deletes).toBe(0)
+    await expect(f.model.doGenerate({ prompt })).rejects.toThrow("closed")
+    await sibling.doGenerate({ prompt })
+    expect(f.state.uploads).toBe(1)
+    await sibling.closeImageFiles()
+    expect(f.state.deletes).toBe(1)
+  } finally {
+    await f.model.closeImageFiles()
+    await sibling.closeImageFiles()
     f.stop()
   }
 })

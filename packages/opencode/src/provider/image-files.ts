@@ -3,6 +3,7 @@ import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provid
 type Uploaded = { file_id: string; expires_at: number; signature: string }
 type Options = { baseURL: string; apiKey: string; fetch?: typeof fetch; now?: () => number }
 type RunCache = {
+  owners: Set<symbol>
   cache: Map<string, Promise<Uploaded>>
   refreshed: Set<string>
   retired: Uploaded[]
@@ -13,7 +14,17 @@ type RunCache = {
 const runCaches = new Map<string, RunCache>()
 
 export function withImageFiles(model: LanguageModelV3, options: Options) {
-  let state: RunCache = { cache: new Map(), refreshed: new Set(), retired: [], waiting: [], active: 0, closed: false }
+  let state: RunCache = {
+    owners: new Set(),
+    cache: new Map(),
+    refreshed: new Set(),
+    retired: [],
+    waiting: [],
+    active: 0,
+    closed: false,
+  }
+  const owner = Symbol()
+  let closed = false
   const now = options.now ?? Date.now
   const endpoint = options.baseURL.replace(/\/$/, "") + "/image-files"
   const send = options.fetch ?? fetch
@@ -46,7 +57,7 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
           )),
     )
     if (!hasImages) return params
-    if (state.closed) throw new Error("Screenshot file cache is closed")
+    if (closed || state.closed) throw new Error("Screenshot file cache is closed")
     const previous = params.providerOptions?.openai?.previousResponseId
     const legacy = params.prompt.some(
       (message) =>
@@ -74,10 +85,11 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
     if (!route.supported && !scope) return params
     if (!route.supported || !route.scope || (scope && scope !== route.scope))
       throw new Error("Screenshot route or account changed; start a new run")
-    if (state.closed) throw new Error("Screenshot file cache is closed")
+    if (closed || state.closed) throw new Error("Screenshot file cache is closed")
     scope = route.scope
     if (!runCaches.has(scope) && runCaches.size >= 128) throw new Error("Too many active screenshot caches")
     state = runCaches.get(scope) ?? state
+    state.owners.add(owner)
     runCaches.set(scope, state)
     routeHeaders = currentHeaders
     const headers = { ...currentHeaders, "x-bu-image-scope": scope }
@@ -87,7 +99,7 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
       else state.active++
       try {
         signal.throwIfAborted()
-        if (state.closed) throw new Error("Screenshot file cache is closed")
+        if (closed || state.closed) throw new Error("Screenshot file cache is closed")
         const raw = data instanceof URL ? data.toString().split(",", 2)[1] : data
         const bytes = typeof raw === "string" ? Buffer.from(raw, "base64") : raw
         if (bytes.byteLength > 5 * 1024 * 1024) throw new Error("Screenshot exceeds upload limit")
@@ -123,10 +135,13 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
             return uploaded
           })()
         state.cache.set(key, pending)
-        const uploaded = await pending
+        const uploaded = await pending.catch((error) => {
+          if (state.cache.get(key) === pending) state.cache.delete(key)
+          throw error
+        })
         if (uploaded.expires_at <= now() / 1000 + 30) throw new Error("Screenshot reference expired; start a new run")
         signal.throwIfAborted()
-        if (state.closed) throw new Error("Screenshot file cache is closed")
+        if (closed || state.closed) throw new Error("Screenshot file cache is closed")
         proofs[uploaded.file_id] = { expires_at: uploaded.expires_at, signature: uploaded.signature }
         return uploaded.file_id
       } finally {
@@ -220,8 +235,12 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
       return invoke(params, (prepared) => model.doStream(prepared))
     },
     async closeImageFiles() {
+      if (closed) return
+      closed = true
+      state.owners.delete(owner)
+      if (state.owners.size) return
       state.closed = true
-      if (scope) runCaches.delete(scope)
+      if (scope && runCaches.get(scope) === state) runCaches.delete(scope)
       const entries = await Promise.allSettled([
         ...state.cache.values(),
         ...state.retired.map((file) => Promise.resolve(file)),

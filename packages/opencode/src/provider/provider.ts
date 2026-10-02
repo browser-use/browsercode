@@ -1789,6 +1789,18 @@ const layer = Layer.effect(
               s.imageFiles.add(wrapped.closeImageFiles)
               return wrapped
             }
+            // Config-only providers can select the SDK default without a custom loader.
+            // OpenAI defaults to Responses; wrap that selector as well.
+            const languageModel = loaded.languageModel.bind(loaded)
+            loaded.languageModel = (id: string) => {
+              const wrapped = withImageFiles(languageModel(id), {
+                baseURL,
+                apiKey: options.apiKey,
+                fetch: options.fetch,
+              })
+              s.imageFiles.add(wrapped.closeImageFiles)
+              return wrapped
+            }
           }
           if (
             model.api.npm === "@ai-sdk/anthropic" &&

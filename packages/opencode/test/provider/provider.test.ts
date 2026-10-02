@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdir, unlink } from "fs/promises"
+import { mkdir, unlink, rename } from "fs/promises"
 import path from "path"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -2056,4 +2056,90 @@ it.effect("opencode loader keeps paid models when auth exists", () =>
     expect(none).toBe(0)
     expect(keyedCount).toBeGreaterThan(0)
   }).pipe(provideMultiInstance),
+)
+
+it.instance(
+  "configuration-only OpenAI gateway wraps the selected Responses model",
+  Effect.gen(function* () {
+    yield* remove("OPENAI_API_KEY")
+    const receipt = { uploads: 0, deletes: 0, bodies: [] as Array<Record<string, unknown>> }
+    yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        Bun.serve({
+          port: 19091,
+          async fetch(request) {
+            const url = new URL(request.url)
+            if (request.method === "DELETE") {
+              receipt.deletes++
+              return Response.json({ deleted: true })
+            }
+            if (url.pathname.endsWith("/capability"))
+              return Response.json({ supported: true, scope: "owned-default-selector" })
+            if (url.pathname.endsWith("/image-files")) {
+              receipt.uploads++
+              return Response.json({ file_id: "file-owned", signature: "proof", expires_at: Date.now() / 1000 + 3600 })
+            }
+            receipt.bodies.push(await request.json())
+            return Response.json({
+              id: "resp_owned",
+              object: "response",
+              created_at: 1,
+              model: "gateway-fixture",
+              output: [],
+              usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+              status: "completed",
+            })
+          },
+        }),
+      ),
+      (server) => Effect.sync(() => server.stop(true)),
+    )
+    const provider = yield* Provider.Service
+    const model = yield* provider.getModel(ProviderV2.ID.openai, ModelV2.ID.make("gateway-fixture"))
+    const language = yield* provider.getLanguage(model)
+    expect(typeof (language as unknown as { closeImageFiles?: unknown }).closeImageFiles).toBe("function")
+    const screenshot = Buffer.from("owned screenshot fixture").toString("base64")
+    for (const turn of [1, 2, 3])
+      yield* Effect.promise(() =>
+        language.doGenerate({
+          prompt: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: `turn ${turn}` },
+                {
+                  type: "file",
+                  mediaType: "image/png",
+                  data: screenshot,
+                  providerOptions: { openai: { imageDetail: "high" } },
+                },
+              ],
+            },
+          ],
+        }),
+      )
+    expect(receipt.uploads).toBe(1)
+    expect(receipt.bodies).toHaveLength(3)
+    for (const body of receipt.bodies) {
+      const serialized = JSON.stringify(body)
+      expect(serialized).toContain("file-owned")
+      expect(serialized).not.toContain(screenshot)
+      expect(serialized).toContain("high")
+    }
+    yield* Effect.promise(() => (language as unknown as { closeImageFiles(): Promise<void> }).closeImageFiles())
+    expect(receipt.deletes).toBe(1)
+  }),
+  {
+    init: (directory) =>
+      Effect.promise(() => rename(path.join(directory, "opencode.json"), path.join(directory, "bcode.json"))),
+    config: {
+      provider: {
+        openai: {
+          npm: "@ai-sdk/openai",
+          options: { apiKey: "v4rt_owned", baseURL: "http://127.0.0.1:19091/api/v4/llm/openai/v1" },
+          models: { "gateway-fixture": { name: "Gateway Fixture", limit: { context: 128000, output: 4096 } } },
+        },
+      },
+    },
+  },
 )

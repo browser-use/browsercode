@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { mkdir, unlink, rename } from "fs/promises"
+import { mkdir, unlink } from "fs/promises"
 import path from "path"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -2063,10 +2063,10 @@ it.instance(
   Effect.gen(function* () {
     yield* remove("OPENAI_API_KEY")
     const receipt = { uploads: 0, deletes: 0, bodies: [] as Array<Record<string, unknown>> }
-    yield* Effect.acquireRelease(
+    const server = yield* Effect.acquireRelease(
       Effect.sync(() =>
         Bun.serve({
-          port: 19091,
+          port: 0,
           async fetch(request) {
             const url = new URL(request.url)
             if (request.method === "DELETE") {
@@ -2093,6 +2093,21 @@ it.instance(
         }),
       ),
       (server) => Effect.sync(() => server.stop(true)),
+    )
+    const instance = yield* TestInstance
+    yield* Effect.promise(() =>
+      Bun.write(
+        path.join(instance.directory, "bcode.json"),
+        JSON.stringify({
+          provider: {
+            openai: {
+              npm: "@ai-sdk/openai",
+              options: { apiKey: "v4rt_owned", baseURL: `${server.url}api/v4/llm/openai/v1` },
+              models: { "gateway-fixture": { name: "Gateway Fixture", limit: { context: 128000, output: 4096 } } },
+            },
+          },
+        }),
+      ),
     )
     const provider = yield* Provider.Service
     const model = yield* provider.getModel(ProviderV2.ID.openai, ModelV2.ID.make("gateway-fixture"))
@@ -2129,17 +2144,4 @@ it.instance(
     yield* Effect.promise(() => (language as unknown as { closeImageFiles(): Promise<void> }).closeImageFiles())
     expect(receipt.deletes).toBe(1)
   }),
-  {
-    init: (directory) =>
-      Effect.promise(() => rename(path.join(directory, "opencode.json"), path.join(directory, "bcode.json"))),
-    config: {
-      provider: {
-        openai: {
-          npm: "@ai-sdk/openai",
-          options: { apiKey: "v4rt_owned", baseURL: "http://127.0.0.1:19091/api/v4/llm/openai/v1" },
-          models: { "gateway-fixture": { name: "Gateway Fixture", limit: { context: 128000, output: 4096 } } },
-        },
-      },
-    },
-  },
 )

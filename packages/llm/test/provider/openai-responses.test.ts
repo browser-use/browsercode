@@ -40,6 +40,44 @@ const expectToolOutput = (body: OpenAIResponses.OpenAIResponsesBody): OpenAITool
 }
 
 describe("OpenAI Responses route", () => {
+  for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
+    it.effect(`prepares Astra reasoning effort ${effort} without sending a request`, () =>
+      Effect.gen(function* () {
+        const prepared = yield* LLMClient.prepare<OpenAIResponses.OpenAIResponsesBody>(
+          LLM.request({
+            model: OpenAI.configure({ apiKey: "test", baseURL: "https://api.openai.test/v1" }).responses("gpt-6-astra"),
+            prompt: "hi",
+            providerOptions: {
+              openai: { reasoningEffort: effort, reasoningSummary: "auto", include: ["reasoning.encrypted_content"] },
+            },
+          }),
+        )
+        expect(prepared.body.reasoning).toEqual({ effort, summary: "auto" })
+        expect(prepared.body.store).toBe(false)
+        expect(prepared.body.include).toEqual(["reasoning.encrypted_content"])
+      }),
+    )
+  }
+
+  for (const [id, effort] of [
+    ["gpt-6-astra", "none"],
+    ["gpt-6-astra", "minimal"],
+    ["gpt-5.5", "max"],
+  ] as const) {
+    it.effect(`rejects unsupported ${id} effort ${effort} before sending`, () =>
+      Effect.gen(function* () {
+        const result = yield* LLMClient.prepare(
+          LLM.request({
+            model: OpenAI.configure({ apiKey: "test" }).responses(id),
+            prompt: "hi",
+            providerOptions: { openai: { reasoningEffort: effort } },
+          }),
+        ).pipe(Effect.result)
+        expect(result._tag).toBe("Failure")
+      }),
+    )
+  }
+
   it.effect("prepares OpenAI Responses target", () =>
     Effect.gen(function* () {
       const prepared = yield* LLMClient.prepare(request)

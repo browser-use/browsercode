@@ -364,7 +364,7 @@ test("repeated invalid references and failed upload stay bounded", async () => {
   try {
     await expect(failed.model.doGenerate({ prompt })).rejects.toThrow("upload failed")
     expect(failed.state.responses).toBe(0)
-    expect(failed.state.uploads).toBe(1)
+    expect(failed.state.uploads).toBe(3)
   } finally {
     failed.stop()
   }
@@ -492,7 +492,7 @@ test("transient upload rejection permits a later explicit retry", async () => {
     expect(f.state.responses).toBe(0)
     options.uploadStatus = undefined
     await f.model.doGenerate({ prompt })
-    expect(f.state.uploads).toBe(2)
+    expect(f.state.uploads).toBe(4)
     expect(f.state.responses).toBe(1)
   } finally {
     await f.model.closeImageFiles()

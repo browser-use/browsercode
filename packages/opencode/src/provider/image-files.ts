@@ -270,8 +270,7 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
       // Provider-side previousResponseId history may still depend on omitted
       // files. Keep explicit stateful chains until close; never assume a copy.
       if (state.chain) for (const key of keys) state.chainKeys.add(key)
-      lease.keys = keys
-      state.leases.add(lease)
+      // Reclaim files newly retired by eviction, after the pre-eviction backlog pass.
       if (!cached) await cleanup(signal)
       const headers = { ...currentHeaders, "x-bu-image-scope": scope! }
       const proofs: Record<string, { expires_at: number; signature: string }> = {}

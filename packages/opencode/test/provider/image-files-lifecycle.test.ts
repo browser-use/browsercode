@@ -21,6 +21,8 @@ function fixture(options: { legacy?: boolean; anthropic?: boolean } = {}) {
     now: Date.now(),
     scope: crypto.randomUUID(),
     deleteStatus: 0,
+    deleteGate: undefined as Promise<void> | undefined,
+    deleteStarted: 0,
     hangDeletes: false,
     uploadGate: undefined as Promise<void> | undefined,
     uploads: 0,
@@ -47,6 +49,8 @@ function fixture(options: { legacy?: boolean; anthropic?: boolean } = {}) {
         })
       }
       if (req.method === "DELETE") {
+        state.deleteStarted++
+        await state.deleteGate
         if (state.hangDeletes) return new Promise<Response>(() => {})
         if (state.deleteStatus) return new Response("failed", { status: state.deleteStatus })
         if (state.deleteFailures-- > 0) return new Response("unavailable", { status: 503 })
@@ -417,6 +421,44 @@ test("cached image requests do not wait behind unrelated slow uploads", async ()
     gate.resolve()
     await uploading
     expect(f.state.uploads).toBe(2)
+  } finally {
+    gate.resolve()
+    await f.close()
+  }
+})
+
+test("fresh wrapper retries cleanup left by a closed owner", async () => {
+  const f = fixture()
+  const sibling = f.wrap()
+  try {
+    await f.model.doGenerate(images(0, 1))
+    f.state.deleteStatus = 400
+    await f.model.closeImageFiles()
+    await expect(sibling.doGenerate(images(0, 1))).rejects.toThrow("closing")
+    f.state.deleteStatus = 0
+    await sibling.doGenerate(images(0, 1))
+    expect(f.state.uploads).toBe(2)
+    expect(f.state.deleted).toHaveLength(1)
+  } finally {
+    await sibling.closeImageFiles()
+    await f.close()
+  }
+})
+
+test("last stream ending during close cleanup schedules a final cleanup pass", async () => {
+  const f = fixture()
+  const gate = Promise.withResolvers<void>()
+  try {
+    const result = await f.model.doStream(images(0, 1))
+    await f.model.doGenerate(images(1, 1))
+    f.state.deleteGate = gate.promise
+    const closing = f.model.closeImageFiles()
+    while (!f.state.deleteStarted) await Bun.sleep(1)
+    await result.stream.cancel()
+    gate.resolve()
+    await closing
+    for (let i = 0; i < 100 && f.state.live.size; i++) await Bun.sleep(5)
+    expect(f.state.live.size).toBe(0)
   } finally {
     gate.resolve()
     await f.close()

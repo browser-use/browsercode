@@ -13,6 +13,7 @@ type RunCache = {
   cache: Map<string, Promise<Uploaded>>
   ready: Map<string, Uploaded>
   busy: boolean
+  cleanupQueued: boolean
   refreshed: Set<string>
   retired: Uploaded[]
   waiting: Array<() => void>
@@ -32,6 +33,7 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
     cache: new Map(),
     ready: new Map(),
     busy: false,
+    cleanupQueued: false,
     refreshed: new Set(),
     retired: [],
     waiting: [],
@@ -100,7 +102,7 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
     return { bytes, key: `${mediaType}:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}` }
   }
 
-  async function cleanup(signal?: AbortSignal) {
+  async function cleanup(signal?: AbortSignal, preserveRegistry = false) {
     const pinned = new Set([...state.leases].flatMap((lease) => [...lease.files]))
     if (state.closed) {
       for (const [key, pending] of state.cache) {
@@ -137,7 +139,14 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
       removed.add(file)
     }
     state.retired = state.retired.filter((file) => !removed.has(file))
-    if (state.closed && !state.cache.size && !state.retired.length && cacheID && runCaches.get(cacheID) === state)
+    if (
+      !preserveRegistry &&
+      state.closed &&
+      !state.cache.size &&
+      !state.retired.length &&
+      cacheID &&
+      runCaches.get(cacheID) === state
+    )
       runCaches.delete(cacheID)
   }
 
@@ -169,7 +178,7 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
           )),
     )
     if (!hasImages) return params
-    if (closed || state.closed) throw new Error("Screenshot file cache is closed")
+    if (closed) throw new Error("Screenshot file cache is closed")
     const previous = params.providerOptions?.openai?.previousResponseId
     const legacy = params.prompt.some(
       (message) =>
@@ -202,7 +211,7 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
     if (!route.supported && !scope) return params
     if (!route.supported || !route.scope || (scope && scope !== route.scope))
       throw new Error("Screenshot route or account changed; start a new run")
-    if (closed || state.closed) throw new Error("Screenshot file cache is closed")
+    if (closed) throw new Error("Screenshot file cache is closed")
     scope = route.scope
     cacheID = `${endpoint}:${model.modelId}:${scope}`
     for (const [id, cached] of runCaches) {
@@ -210,7 +219,18 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
     }
     if (!runCaches.has(cacheID) && runCaches.size >= 128) throw new Error("Too many active screenshot caches")
     state = runCaches.get(cacheID) ?? state
-    if (state.closed) throw new Error("Screenshot file cache is closing; retry cleanup first")
+    routeHeaders = currentHeaders
+    if (state.closed)
+      await locked(async () => {
+        if (!state.closed) return
+        await cleanup(signal, true)
+        if (state.cache.size || state.retired.length || state.leases.size)
+          throw new Error("Screenshot file cache is closing; retry cleanup first")
+        state.closed = false
+        state.chain = false
+        state.chainKeys.clear()
+      })
+    if (closed) throw new Error("Screenshot file cache is closed")
     if (stateful) {
       state.chain = true
       for (const key of state.cache.keys()) state.chainKeys.add(key)
@@ -404,9 +424,18 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
 
   async function release(lease: Lease) {
     state.leases.delete(lease)
-    // A cache-hit call must not queue its completion behind unrelated uploads.
-    // The current lock holder performs deferred cleanup when it releases its lease.
-    if (!state.busy) await locked(() => cleanup())
+    if (state.cleanupQueued) return
+    // Cache hits complete promptly, but the final lease may end during close.
+    // Coalesce a follow-up pass rather than relying on another future release.
+    if (state.busy) {
+      state.cleanupQueued = true
+      void locked(async () => {
+        state.cleanupQueued = false
+        await cleanup()
+      }).catch(() => {})
+      return
+    }
+    await locked(() => cleanup())
   }
 
   async function invoke<T>(

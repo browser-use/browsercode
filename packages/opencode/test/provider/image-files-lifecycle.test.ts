@@ -23,6 +23,10 @@ function fixture(options: { legacy?: boolean; anthropic?: boolean } = {}) {
     deleteStatus: 0,
     deleteGate: undefined as Promise<void> | undefined,
     deleteStarted: 0,
+    deleteDelay: 0,
+    deleteActive: 0,
+    deletePeak: 0,
+    uploadDelay: 0,
     hangDeletes: false,
     uploadGate: undefined as Promise<void> | undefined,
     uploads: 0,
@@ -50,17 +54,25 @@ function fixture(options: { legacy?: boolean; anthropic?: boolean } = {}) {
       }
       if (req.method === "DELETE") {
         state.deleteStarted++
-        await state.deleteGate
-        if (state.hangDeletes) return new Promise<Response>(() => {})
-        if (state.deleteStatus) return new Response("failed", { status: state.deleteStatus })
-        if (state.deleteFailures-- > 0) return new Response("unavailable", { status: 503 })
-        const id = new URL(req.url).pathname.split("/").at(-1)!
-        state.deleted.push(id)
-        state.live.delete(id)
-        return Response.json({ deleted: true })
+        state.deleteActive++
+        state.deletePeak = Math.max(state.deletePeak, state.deleteActive)
+        try {
+          await Bun.sleep(state.deleteDelay)
+          await state.deleteGate
+          if (state.hangDeletes) return new Promise<Response>(() => {})
+          if (state.deleteStatus) return new Response("failed", { status: state.deleteStatus })
+          if (state.deleteFailures-- > 0) return new Response("unavailable", { status: 503 })
+          const id = new URL(req.url).pathname.split("/").at(-1)!
+          state.deleted.push(id)
+          state.live.delete(id)
+          return Response.json({ deleted: true })
+        } finally {
+          state.deleteActive--
+        }
       }
       state.uploads++
       const upload = state.uploads
+      await Bun.sleep(state.uploadDelay)
       await state.uploadGate
       if (state.uploadFailures-- > 0) return new Response("unavailable", { status: 503 })
       const id = `${options.anthropic ? "file_" : "file-"}${upload}`
@@ -461,6 +473,74 @@ test("last stream ending during close cleanup schedules a final cleanup pass", a
     expect(f.state.live.size).toBe(0)
   } finally {
     gate.resolve()
+    await f.close()
+  }
+})
+
+for (const latency of [false, true]) {
+  test(`healthy cleanup keeps up with 1000 lifetime images and 100 active (latency=${latency})`, async () => {
+    const f = fixture()
+    f.state.deleteDelay = latency ? 200 : 0
+    f.state.uploadDelay = latency ? 20 : 0
+    try {
+      for (let turn = 0; turn < 10; turn++) {
+        await f.model.doGenerate(images(turn * 100, 100))
+        expect(f.state.live.size).toBeLessThanOrEqual(600)
+        if (latency) await Bun.sleep(50)
+      }
+      expect(f.state.uploads).toBe(1000)
+      expect(f.state.calls).toHaveLength(10)
+      await f.model.closeImageFiles()
+      const deadline = Date.now() + 6000
+      while (f.state.live.size && Date.now() < deadline) await Bun.sleep(10)
+      expect(f.state.live.size).toBe(0)
+      expect(f.state.deleted).toHaveLength(1000)
+      expect(new Set(f.state.deleted).size).toBe(1000)
+      expect(f.state.deletePeak).toBeLessThanOrEqual(16)
+    } finally {
+      await f.close()
+    }
+  }, 30000)
+}
+
+test("preparation shares one second of cleanup wait across eviction passes", async () => {
+  const f = fixture()
+  try {
+    await f.model.doGenerate(images(0, 300))
+    f.state.deleteStatus = 400
+    await f.model.doGenerate(images(300, 100))
+    f.state.deleteStatus = 0
+    f.state.deleteDelay = 200
+    const started = performance.now()
+    const result = await f.model.doStream(images(400, 100))
+    expect(performance.now() - started).toBeLessThan(1400)
+    expect(f.state.uploads).toBe(500)
+    expect(f.state.deletePeak).toBeLessThanOrEqual(16)
+    await result.stream.cancel()
+    await f.model.closeImageFiles()
+    const deadline = Date.now() + 7000
+    while (f.state.live.size && Date.now() < deadline) await Bun.sleep(10)
+    expect(f.state.live.size).toBe(0)
+  } finally {
+    await f.close()
+  }
+}, 15000)
+
+test("background cleanup stops on failure and keeps tombstones for explicit recovery", async () => {
+  const f = fixture()
+  try {
+    await f.model.doGenerate(images(0, 100))
+    f.state.deleteStatus = 400
+    await f.model.closeImageFiles()
+    const attempts = f.state.deleteStarted
+    expect(attempts).toBe(16)
+    await Bun.sleep(100)
+    expect(f.state.deleteStarted).toBe(attempts)
+    expect(f.state.live.size).toBe(100)
+    f.state.deleteStatus = 0
+    await f.model.closeImageFiles()
+    expect(f.state.live.size).toBe(0)
+  } finally {
     await f.close()
   }
 })

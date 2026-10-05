@@ -14,6 +14,7 @@ type RunCache = {
   ready: Map<string, Uploaded>
   busy: boolean
   cleanupQueued: boolean
+  cleaning?: Promise<boolean>
   refreshed: Set<string>
   retired: Uploaded[]
   waiting: Array<() => void>
@@ -102,56 +103,91 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
     return { bytes, key: `${mediaType}:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}` }
   }
 
-  async function cleanup(signal?: AbortSignal, preserveRegistry = false) {
-    const pinned = new Set([...state.leases].flatMap((lease) => [...lease.files]))
-    if (state.closed) {
-      for (const [key, pending] of state.cache) {
-        if ([...state.leases].some((lease) => lease.keys.has(key))) continue
-        if (state.retired.length >= 300) break
-        const file = await pending.catch(() => undefined)
-        state.cache.delete(key)
-        state.ready.delete(key)
-        state.refreshed.delete(key)
-        if (file) state.retired.push(file)
-      }
+  // One shared drain prevents concurrent wrappers from multiplying DELETE work.
+  // Its per-file timeout is independent of a caller's bounded foreground wait.
+  async function cleanup(signal?: AbortSignal, preserveRegistry = false, budget = { remaining: 1000 }) {
+    const forget = () => {
+      if (
+        state.closed &&
+        !state.cache.size &&
+        !state.retired.length &&
+        !state.leases.size &&
+        cacheID &&
+        runCaches.get(cacheID) === state
+      )
+        runCaches.delete(cacheID)
     }
-    // Cleanup is best effort with one total deadline, including retries. A
-    // deletion outage must not hold the request lock for one timeout per file.
-    const deadline = AbortSignal.any([AbortSignal.timeout(1000), ...(signal ? [signal] : [])])
-    const removed = new Set<Uploaded>()
-    let attempted = 0
-    for (const file of state.retired) {
-      if (pinned.has(file.file_id) || (state.chain && !state.closed)) continue
-      if (file.expires_at <= now() / 1000) {
-        removed.add(file)
-        continue
-      }
-      if (deadline.aborted || attempted++ >= (state.closed ? 300 : 8)) break
-      const response = await request(
-        `${endpoint}/${encodeURIComponent(file.file_id)}?model=${encodeURIComponent(model.modelId)}`,
-        {
-          method: "DELETE",
-          headers: { ...routeHeaders, "x-bu-image-scope": scope! },
-          signal: deadline,
-        },
-      ).catch(() => undefined)
-      if (!response?.ok && response?.status !== 404) break
-      removed.add(file)
+    const joined = Boolean(state.cleaning)
+    if (!state.cleaning) {
+      state.cleaning = (async () => {
+        for (;;) {
+          if (state.closed) {
+            for (const [key, file] of state.ready) {
+              if ([...state.leases].some((lease) => lease.keys.has(key))) continue
+              if (state.retired.length >= 300) break
+              state.cache.delete(key)
+              state.ready.delete(key)
+              state.refreshed.delete(key)
+              state.retired.push(file)
+            }
+          }
+          const pinned = new Set([...state.leases].flatMap((lease) => [...lease.files]))
+          const batch = state.retired
+            .filter((file) => !pinned.has(file.file_id) && (!state.chain || state.closed))
+            .slice(0, 16)
+          if (!batch.length) return true
+          const removed = await Promise.all(
+            batch.map(async (file) => {
+              if (file.expires_at <= now() / 1000) return file
+              const response = await request(
+                `${endpoint}/${encodeURIComponent(file.file_id)}?model=${encodeURIComponent(model.modelId)}`,
+                {
+                  method: "DELETE",
+                  headers: { ...routeHeaders, "x-bu-image-scope": scope! },
+                  signal: AbortSignal.timeout(1000),
+                },
+              ).catch(() => undefined)
+              await response?.body?.cancel().catch(() => {})
+              return response?.ok || response?.status === 404 ? file : undefined
+            }),
+          )
+          // Filter the current queue: other requests can retire files while a
+          // batch is in flight. Failed tombstones survive for an explicit retry.
+          const done = new Set(removed.filter((file) => file !== undefined))
+          state.retired = state.retired.filter((file) => !done.has(file))
+          if (done.size !== batch.length) return false
+        }
+      })().finally(() => {
+        state.cleaning = undefined
+        // A caller reopening this cache holds the lock and keeps its registry
+        // entry stable until it has either reopened it or reported backpressure.
+        if (!state.busy) forget()
+      })
     }
-    state.retired = state.retired.filter((file) => !removed.has(file))
-    if (
-      !preserveRegistry &&
-      state.closed &&
-      !state.cache.size &&
-      !state.retired.length &&
-      cacheID &&
-      runCaches.get(cacheID) === state
-    )
-      runCaches.delete(cacheID)
+    const started = performance.now()
+    const result = await new Promise<boolean | undefined>((resolve) => {
+      const finish = (result?: boolean) => {
+        clearTimeout(timer)
+        signal?.removeEventListener("abort", abort)
+        resolve(result)
+      }
+      const abort = () => finish()
+      const timer = setTimeout(abort, Math.max(0, budget.remaining))
+      signal?.addEventListener("abort", abort, { once: true })
+      void state.cleaning!.then(finish, abort)
+      if (signal?.aborted) abort()
+    })
+    budget.remaining = Math.max(0, budget.remaining - (performance.now() - started))
+    // An explicit retry may have joined the tail of a failed drain. Use only
+    // its remaining budget to start one fresh attempt after that drain ends.
+    if (joined && result === false && budget.remaining > 0 && !signal?.aborted)
+      await cleanup(signal, preserveRegistry, budget)
+    if (!preserveRegistry) forget()
   }
 
   async function prepare(params: LanguageModelV3CallOptions, lease: Lease): Promise<LanguageModelV3CallOptions> {
     if (!enabled) return params
+    const cleanupBudget = { remaining: 1000 }
     const stateful =
       !anthropic &&
       (typeof params.providerOptions?.openai?.previousResponseId === "string" ||
@@ -223,7 +259,7 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
     if (state.closed)
       await locked(async () => {
         if (!state.closed) return
-        await cleanup(signal, true)
+        await cleanup(signal, true, cleanupBudget)
         if (state.cache.size || state.retired.length || state.leases.size)
           throw new Error("Screenshot file cache is closing; retry cleanup first")
         state.closed = false
@@ -273,7 +309,7 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
         )
       lease.keys = keys
       state.leases.add(lease)
-      if (!cached) await cleanup(signal)
+      if (!cached) await cleanup(signal, false, cleanupBudget)
       const missing = [...keys].filter((key) => !state.cache.has(key)).length
       for (const key of state.cache.keys()) {
         if (state.cache.size + missing <= 300) break
@@ -291,7 +327,7 @@ export function withImageFiles(model: LanguageModelV3, options: Options) {
       // files. Keep explicit stateful chains until close; never assume a copy.
       if (state.chain) for (const key of keys) state.chainKeys.add(key)
       // Reclaim files newly retired by eviction, after the pre-eviction backlog pass.
-      if (!cached) await cleanup(signal)
+      if (!cached) await cleanup(signal, false, cleanupBudget)
       const headers = { ...currentHeaders, "x-bu-image-scope": scope! }
       const proofs: Record<string, { expires_at: number; signature: string }> = {}
       async function upload(data: string | Uint8Array | URL, mediaType: string) {

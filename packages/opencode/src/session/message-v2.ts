@@ -747,6 +747,7 @@ export function fromError(
               message: parsed.message,
               isRetryable: parsed.isRetryable,
               responseBody: parsed.responseBody,
+              ...(parsed.metadata ? { metadata: parsed.metadata } : {}),
             },
             {
               cause: e,

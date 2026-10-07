@@ -97,6 +97,7 @@ export type ParsedStreamError =
       message: string
       isRetryable: boolean
       responseBody: string
+      metadata?: Record<string, string>
     }
 
 export function parseStreamError(input: unknown): ParsedStreamError | undefined {
@@ -141,6 +142,21 @@ export function parseStreamError(input: unknown): ParsedStreamError | undefined 
         message: typeof error.message === "string" ? error.message : "Invalid prompt.",
         isRetryable: false,
         responseBody,
+      }
+    case "upstream_stream_failed":
+      if (
+        typeof error.message !== "string" ||
+        !/^(ReadError|ReadTimeout|RemoteProtocolError|APIConnectionError|ConnectError|ConnectTimeout)(?::|$)/.test(
+          error.message,
+        )
+      )
+        return
+      return {
+        type: "api_error",
+        message: error.message,
+        isRetryable: true,
+        responseBody,
+        metadata: { code: "upstream_stream_failed" },
       }
     case "server_is_overloaded":
     case "server_error":

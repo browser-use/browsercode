@@ -234,4 +234,4 @@ runs this filtered command.
 - Keep EventV2 replay owner claims separate from clustered Session execution ownership.
 - Keep the System Context algebra, registry, and built-ins in `src/system-context`; keep Context Source producers with their observed domains, and keep Session History selection plus Context Epoch persistence Session-owned.
 
-- Retry streamed transport failures with a finite budget before tool execution starts; preserve earlier parts and discard only the incomplete attempt.
+- Retry streamed transport failures with a finite budget only while no tool call has been observed and no tool execution has begun; preserve earlier parts and discard only the incomplete attempt.

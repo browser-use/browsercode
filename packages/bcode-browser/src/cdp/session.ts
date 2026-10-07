@@ -399,7 +399,7 @@ export class Session implements Transport {
 
 export class RendererCrashedError extends Error {
   constructor(public sessionId: string) {
-    super('Renderer crashed. The browser may still be connected. Use Target.closeTarget and Target.createTarget, then session.use() to recover in the same browser. Page state is lost; verify any previous submission before retrying it.');
+    super('Renderer crashed. Use Target.closeTarget, Target.createTarget, then session.use(). Verify previous submissions before retrying.');
     this.name = 'RendererCrashedError';
   }
 }

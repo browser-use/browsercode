@@ -108,6 +108,8 @@ await session.use(page.targetId)
 
 If a target-scoped command throws `CdpError` code `-32001` (`Session with given id not found`), the browser connection is still usable but the target session is stale. List targets again, `session.use(...)` the intended page, and retry the rejected command once. Calling `session.connect()` without arguments is a no-op while connected; it does not replace a stale target session.
 
+A `RendererCrashedError` means the attached page renderer died, even if the browser socket is still connected. Pending page commands fail immediately. Do not keep evaluating, taking screenshots, or waiting on that dead page. Use browser-level `Target.closeTarget` and `Target.createTarget`, then `session.use(newTargetId)` to recover within the same browser. Cookies and durable site storage may survive, but DOM nodes, JavaScript objects, and unsaved page state do not. Verify whether the previous business action committed before retrying it. Replace the whole browser only if browser-level controls also fail.
+
 Every explicit reconnect or browser switch retires the previous socket and clears its active target attachment. Re-list targets, call `session.use(...)`, and rediscover DOM nodes and Runtime objects before continuing.
 
 Opening a tab creates a new `page` target but does not switch the active attachment. Call `Target.getTargets` again and `session.use(targetId)` when continuing there.

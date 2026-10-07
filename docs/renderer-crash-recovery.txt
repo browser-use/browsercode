@@ -1,0 +1,28 @@
+Renderer crash recovery: evidence and release boundary
+2026-10-07
+
+Defect
+A browser WebSocket can remain open after its attached renderer dies. Session previously forwarded Inspector.targetCrashed to optional listeners without rejecting pending CDP requests or recording a fatal page state. Thus Runtime.evaluate, screenshots, and page-event waits could stall until the enclosing tool timeout, while Browser/Target commands still worked. Reconnecting alone is not proof of page health.
+
+Reproduction
+Base: 5140cef334fad780b1a1a8d24fa2f56b37d7d6ef.
+The Cloud-pinned v0.1.21-telemetry.1 source also lacks renderer-crash handling.
+Runtime: Bun 1.3.14, Google Chrome 155.0.8059.39, dedicated loopback CDP profile on Linux.
+The real-browser test creates a local page, stores a cookie and localStorage value, starts a pending Runtime.evaluate, and invokes Page.crash. On the base implementation the pending operation reaches the test deadline instead of returning RendererCrashedError. With this patch pending calls reject, further page calls and known-dead reattachment reject, Target controls stay usable, and a replacement tab can evaluate and screenshot. Both cookie and localStorage survive.
+Page.crash tests the crash boundary, not the cause of memory pressure. It is not a reproduction of a customer's SAP workload or a proof of a memory leak.
+
+Change
+session.use enables Inspector crash notifications. Errors are scoped to the CDP attachment that crashed; another attachment and browser-level controls remain usable. No command, navigation, or transaction is replayed automatically. Reconnect clears connection-scoped bookkeeping. A reload-after-crash event clears the affected session's crash state. Agent guidance explains same-browser recovery and checking whether a previous submission already committed.
+
+Verification
+57 tests passed, one unrelated live HTTP test skipped with BCODE_SMOKE_CHROME=1, BCODE_SMOKE_PROFILE_DIR and BCODE_CRASH_PROFILE_DIR pointing to an isolated Chrome profile. Package bun typecheck passed. Event tests cover attachment isolation, no replay, wait rejection, reload and reconnect. The live crash test failed before the patch and passed after it.
+Reproduce from packages/bcode-browser using bun test test/renderer-crash.test.ts with BCODE_CRASH_PROFILE_DIR set to a dedicated Chrome profile. This test intentionally crashes a page. Never point it at a user's working browser.
+
+Compatibility and limitations
+No HTTP API, persisted schema, browser allocation, billing, or customer profile changes. One Inspector.enable round trip is added for each session.use call. Existing consumers now receive an earlier typed error after an observed crash. Raw Target.attachToTarget/setActiveSession users must enable Inspector themselves. A crash before this connection observed it, a wedged renderer without a crash event, or a dead browser process still needs a separate bounded health diagnosis. Recovery preserves browser-profile storage when the process survives; it cannot restore DOM, JS heap, sessionStorage in a closed tab, or unsaved form state.
+
+Rollout
+This source PR alone does not change Cloud's pinned binary. Publish an immutable release, update the Cloud version/checksum deliberately, then run a staging agent task that observes a renderer crash and recovers in the same browser without replaying a side-effecting operation. Verify the agent sees the error and the preview follows the replacement tab. Run a normal navigation/screenshot task and a browser-switch task as compatibility canaries. Roll back the binary pin if normal attachment starts timing out or Inspector.enable fails on supported endpoints. No merge, staging deployment, or production rollout is claimed here.
+
+Historical guardrail
+The 2025-11-19 Cloud cleanup/scheduler incident accumulated sessions and exhausted capacity. Avoid enlarging that failure domain: this change allocates no additional browser VM, increases no guest memory limit, and performs no automatic retry loop. Close only the known dead target during explicit recovery and preserve cancellation. The next health/telemetry work should distinguish browser liveness, page responsiveness, crash events, and guest memory pressure rather than change the meaning of the existing lifecycle status.

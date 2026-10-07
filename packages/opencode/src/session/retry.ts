@@ -80,6 +80,10 @@ export function delay(attempt: number, error?: SessionV1.APIError) {
   return cap(Math.min(RETRY_INITIAL_DELAY * Math.pow(RETRY_BACKOFF_FACTOR, attempt - 1), RETRY_MAX_DELAY_NO_HEADERS))
 }
 
+export function isTransportError(error: Err) {
+  return SessionV1.APIError.isInstance(error) && error.data.metadata?.code === "upstream_stream_failed"
+}
+
 export function retryable(error: Err, provider: string) {
   if (SessionV1.OutputLengthError.isInstance(error)) {
     return { message: "Model hit its output limit", maxTotalAttempts: 3 }
@@ -87,6 +91,7 @@ export function retryable(error: Err, provider: string) {
   // context overflow errors should not be retried
   if (SessionV1.ContextOverflowError.isInstance(error)) return undefined
   if (SessionV1.APIError.isInstance(error)) {
+    if (isTransportError(error)) return { message: error.data.message, maxTotalAttempts: 3 }
     const status = error.data.statusCode
     // 5xx errors are transient server failures and should always be retried,
     // even when the provider SDK doesn't explicitly mark them as retryable.
@@ -194,6 +199,7 @@ function parseJSON(value: unknown) {
 export function policy(opts: {
   provider: string
   parse: (error: unknown) => Err
+  canRetry?: (error: Err) => boolean
   onRetry?: (error: Err) => Effect.Effect<void>
   set: (input: { attempt: number; message: string; action?: Retryable["action"]; next: number }) => Effect.Effect<void>
 }) {
@@ -201,7 +207,7 @@ export function policy(opts: {
     Effect.succeed((meta: Schedule.InputMetadata<unknown>) => {
       const error = opts.parse(meta.input)
       const retry = retryable(error, opts.provider)
-      if (!retry) return Cause.done(meta.attempt)
+      if (!retry || opts.canRetry?.(error) === false) return Cause.done(meta.attempt)
       // `meta.attempt` is 1-based and shared by every reason (Schedule keeps one
       // counter per request), which is why the cap reads as a total.
       if (retry.maxTotalAttempts !== undefined && meta.attempt >= retry.maxTotalAttempts)

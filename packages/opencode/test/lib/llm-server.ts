@@ -330,6 +330,7 @@ function flow(item: Sse) {
 }
 
 function responses(item: Sse, model: string) {
+  if ([...item.head, ...item.tail].some((part) => part && typeof part === "object" && "type" in part)) return item
   let seq = 1
   let msg: string | undefined
   let reason: string | undefined

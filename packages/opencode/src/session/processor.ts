@@ -167,14 +167,14 @@ const layer = Layer.effect(
         return { call, part }
       })
 
-      const resetOutputLimit = Effect.fn("SessionProcessor.resetOutputLimit")(function* () {
+      const resetAttempt = Effect.fn("SessionProcessor.resetAttempt")(function* (keep?: ReadonlySet<PartID>) {
         const parts = yield* MessageV2.parts(ctx.assistantMessage.id).pipe(
           Effect.provideService(Database.Service, database),
         )
         // Replace the streamed attempt before resampling the unchanged request.
         // Its usage is carried into the next step-finish part.
         yield* Effect.forEach(
-          parts,
+          parts.filter((part) => !keep?.has(part.id)),
           (part) =>
             session.removePart({
               sessionID: part.sessionID,
@@ -702,6 +702,19 @@ const layer = Layer.effect(
           "session.id": input.sessionID,
           messageID: input.assistantMessage.id,
         })
+        const retained = new Set(
+          (yield* MessageV2.parts(ctx.assistantMessage.id).pipe(Effect.provideService(Database.Service, database))).map(
+            (part) => part.id,
+          ),
+        )
+        let toolExecuted = false
+        const request = {
+          ...streamInput,
+          onToolExecution: () => {
+            toolExecuted = true
+            streamInput.onToolExecution?.()
+          },
+        }
         ctx.needsCompaction = false
         ctx.shouldBreak = (yield* config.get()).experimental?.continue_loop_on_deny !== true
 
@@ -710,10 +723,13 @@ const layer = Layer.effect(
             ctx.currentText = undefined
             ctx.reasoningMap = {}
             yield* status.set(ctx.sessionID, { type: "busy" })
-            const stream = llm.stream(streamInput)
+            const stream = llm.stream(request)
 
             yield* stream.pipe(
-              Stream.tap((event) => handleEvent(event)),
+              Stream.tap((event) => {
+                if (event.type === "tool-call" || event.type === "tool-result") toolExecuted = true
+                return handleEvent(event)
+              }),
               Stream.takeUntil(() => ctx.needsCompaction),
               Stream.runDrain,
             )
@@ -734,10 +750,15 @@ const layer = Layer.effect(
               SessionRetry.policy({
                 provider: input.model.providerID,
                 parse,
+                canRetry: (error) => !SessionRetry.isTransportError(error) || !toolExecuted,
                 // Only replace attempts that will be retried. Cloud intentionally
                 // returns the terminal partial next to the truncation error.
                 onRetry: (error) =>
-                  SessionV1.OutputLengthError.isInstance(error) ? resetOutputLimit() : Effect.void,
+                  SessionV1.OutputLengthError.isInstance(error)
+                    ? resetAttempt()
+                    : SessionRetry.isTransportError(error)
+                      ? resetAttempt(retained)
+                      : Effect.void,
                 set: (info) => {
                   return status.set(ctx.sessionID, {
                     type: "retry",

@@ -19,7 +19,7 @@ import { SessionStatus } from "../../src/session/status"
 import { SessionSummary } from "../../src/session/summary"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { provideTmpdirInstance, provideTmpdirServer } from "../fixture/fixture"
-import { testEffect } from "../lib/effect"
+import { pollWithTimeout, testEffect } from "../lib/effect"
 import { raw, reply, TestLLMServer } from "../lib/llm-server"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -1171,3 +1171,215 @@ itFragmentFailure.live("session.processor effect tests retain partial legacy par
     { config: cfg },
   ),
 )
+
+for (const mode of ["recover", "protocol", "connection", "exhaust", "executed", "permanent", "cancel"] as const) {
+  it.live(
+    `gateway transport recovery ${mode}`,
+    () =>
+      provideTmpdirServer(
+        ({ dir, llm }) =>
+          Effect.gen(function* () {
+            yield* Effect.promise(() => Bun.write(path.join(dir, "bcode.json"), JSON.stringify(providerCfg(llm.url))))
+            const { processors, session, provider } = yield* boot()
+            const recover = mode === "recover" || mode === "protocol" || mode === "connection"
+            const action = defer<void>()
+            let executed = 0
+            const created = {
+              type: "response.created",
+              sequence_number: 1,
+              response: { id: "resp_transport", created_at: 1, model: "test-model", service_tier: null },
+            }
+            const call = {
+              type: "response.output_item.added",
+              sequence_number: 2,
+              output_index: 0,
+              item: {
+                type: "function_call",
+                id: "fc_transport",
+                call_id: "call_transport",
+                name: "lookup",
+                arguments: "",
+              },
+            }
+            const args = {
+              type: "response.function_call_arguments.delta",
+              sequence_number: 3,
+              output_index: 0,
+              item_id: "fc_transport",
+              delta: '{"query":"weather"}',
+            }
+            const called = {
+              type: "response.output_item.done",
+              sequence_number: 4,
+              output_index: 0,
+              item: { ...call.item, arguments: args.delta, status: "completed" },
+            }
+            const completed = {
+              type: "response.completed",
+              sequence_number: 9,
+              response: {
+                incomplete_details: null,
+                service_tier: null,
+                usage: {
+                  input_tokens: 7,
+                  input_tokens_details: { cached_tokens: null },
+                  output_tokens: 11,
+                  output_tokens_details: { reasoning_tokens: null },
+                },
+              },
+            }
+            const error = {
+              type: "error",
+              sequence_number: 8,
+              error: {
+                type: "upstream_error",
+                code: "upstream_stream_failed",
+                message:
+                  mode === "permanent"
+                    ? "ValueError: invalid local state"
+                    : mode === "protocol"
+                      ? "RemoteProtocolError: incomplete chunked read"
+                      : mode === "connection"
+                        ? "APIConnectionError: Connection error."
+                        : "ReadError",
+              },
+            }
+            const partial = [
+              created,
+              {
+                type: "response.output_item.added",
+                sequence_number: 2,
+                output_index: 0,
+                item: { type: "reasoning", id: "rs_transport", encrypted_content: null },
+              },
+              {
+                type: "response.reasoning_summary_part.added",
+                sequence_number: 3,
+                item_id: "rs_transport",
+                summary_index: 0,
+              },
+              {
+                type: "response.reasoning_summary_text.delta",
+                sequence_number: 4,
+                item_id: "rs_transport",
+                summary_index: 0,
+                delta: "unfinished reasoning",
+              },
+              {
+                type: "response.output_item.added",
+                sequence_number: 5,
+                output_index: 1,
+                item: { type: "message", id: "msg_partial" },
+              },
+              {
+                type: "response.output_text.delta",
+                sequence_number: 6,
+                item_id: "msg_partial",
+                delta: "unfinished answer",
+                logprobs: null,
+              },
+            ]
+            const first =
+              mode === "executed"
+                ? raw({ head: [created, call, args, called], wait: action.promise, tail: [error] })
+                : raw({ chunks: [...partial, error] })
+            yield* llm.push(first)
+            if (mode === "exhaust") {
+              yield* llm.push(first)
+              yield* llm.push(first)
+            }
+            yield* llm.push(
+              raw({
+                chunks: [
+                  created,
+                  {
+                    type: "response.output_item.added",
+                    sequence_number: 2,
+                    output_index: 0,
+                    item: { type: "message", id: "msg_complete" },
+                  },
+                  {
+                    type: "response.output_text.delta",
+                    sequence_number: 3,
+                    item_id: "msg_complete",
+                    delta: "recovered",
+                    logprobs: null,
+                  },
+                  {
+                    type: "response.output_item.done",
+                    sequence_number: 4,
+                    output_index: 0,
+                    item: { type: "message", id: "msg_complete" },
+                  },
+                  { ...call, sequence_number: 5, output_index: 1 },
+                  { ...args, sequence_number: 6, output_index: 1 },
+                  { ...called, sequence_number: 7, output_index: 1 },
+                  completed,
+                ],
+              }),
+            )
+            const chat = yield* session.create({})
+            const parent = yield* user(chat.id, "recover this turn")
+            const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+            const configured = yield* provider.getModel(ref.providerID, ref.modelID)
+            const mdl = {
+              ...configured,
+              cost: { ...configured.cost, input: 1, output: 1 },
+              api: { ...configured.api, npm: "@ai-sdk/openai" },
+            }
+            const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
+            const work = handle.process({
+              user: parent,
+              sessionID: chat.id,
+              model: mdl,
+              agent: agent(),
+              system: [],
+              messages: [{ role: "user", content: "recover this turn" }],
+              tools: {
+                lookup: tool({
+                  inputSchema: z.object({ query: z.string() }),
+                  execute: async () => {
+                    executed += 1
+                    action.resolve()
+                    return { output: "done", title: "lookup", metadata: {} }
+                  },
+                }),
+              },
+            })
+            if (mode === "cancel") {
+              const fiber = yield* work.pipe(Effect.forkChild)
+              const status = yield* SessionStatus.Service
+              yield* pollWithTimeout(
+                status.get(chat.id).pipe(Effect.map((value) => (value.type === "retry" ? true : undefined))),
+                "transport retry never entered backoff",
+              )
+              yield* Fiber.interrupt(fiber)
+              expect(Exit.isFailure(yield* Fiber.await(fiber))).toBe(true)
+              expect(yield* llm.calls).toBe(1)
+              expect(executed).toBe(0)
+              return
+            }
+            const value = yield* work
+            const parts = yield* MessageV2.parts(msg.id)
+            expect(yield* llm.calls).toBe(recover ? 2 : mode === "exhaust" ? 3 : 1)
+            expect(value).toBe(recover ? "continue" : "stop")
+            expect(executed).toBe(recover || mode === "executed" ? 1 : 0)
+            if (recover) {
+              expect(handle.message.error).toBeUndefined()
+              expect(parts.filter((part) => part.type === "text").map((part) => part.text)).toStrictEqual(["recovered"])
+              expect(parts.filter((part) => part.type === "reasoning")).toHaveLength(0)
+              expect(handle.message.tokens.input).toBe(7)
+              expect(handle.message.tokens.output).toBe(11)
+              expect(handle.message.cost).toBeCloseTo(18 / 1_000_000)
+            } else {
+              expect(handle.message.error).toBeDefined()
+              if (mode === "executed") {
+                expect(parts.filter((part) => part.type === "tool")).toHaveLength(1)
+              }
+            }
+          }),
+        { config: (url) => providerCfg(url) },
+      ),
+    20000,
+  )
+}

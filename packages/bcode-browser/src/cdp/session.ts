@@ -10,7 +10,6 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { bindDomains, type Domains, type Transport } from './generated.ts';
 
 type Pending = {
-  sessionId?: string;
   resolve: (v: unknown) => void;
   reject: (e: unknown) => void;
 };
@@ -64,8 +63,6 @@ export class Session implements Transport {
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private activeSessionId: string | undefined;
-  private sessionTargets = new Map<string, string>();
-  private crashedSessions = new Map<string, RendererCrashedError>();
   private eventListeners: Array<(method: string, params: unknown, sessionId?: string) => void> = [];
   private callResultListeners: Array<(method: string, params: unknown, result: unknown) => void> = [];
 
@@ -146,8 +143,6 @@ export class Session implements Transport {
       const previousWs = this.ws;
       this.ws = ws;
       this.activeSessionId = undefined;
-      this.crashedSessions.clear();
-      this.sessionTargets.clear();
       if (previousWs) {
         for (const [, p] of this.pending) p.reject(new Error('CDP connection replaced'));
         this.pending.clear();
@@ -219,14 +214,9 @@ export class Session implements Transport {
    * Uses Target.attachToTarget with flatten:true (single-WS, sessionId-on-message).
    */
   async use(targetId: string): Promise<string> {
-    for (const [sessionId, error] of this.crashedSessions) {
-      if (this.sessionTargets.get(sessionId) === targetId) throw error;
-    }
     const r = await this._call('Target.attachToTarget', { targetId, flatten: true }) as { sessionId: string };
     assertExecutionActive();
     this.activeSessionId = r.sessionId;
-    this.sessionTargets.set(r.sessionId, targetId);
-    await this._call('Inspector.enable');
     return r.sessionId;
   }
 
@@ -304,21 +294,12 @@ export class Session implements Transport {
     if (rest.length > 0) {
       throw new TypeError('waitFor(method, { predicate, timeoutMs }) — pass the timeout in the options object');
     }
-    const sessionId = isBrowserLevel(method) ? undefined : this.activeSessionId;
-    const crashed = sessionId && this.crashedSessions.get(sessionId);
-    if (crashed) return Promise.reject(crashed);
     const p = new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         unsub();
         reject(new Error(`Timeout waiting for ${method}`));
       }, opts.timeoutMs ?? 30_000);
-      const unsub = this.onEvent((m, params, eventSessionId) => {
-        if (sessionId && m === 'Inspector.targetCrashed' && eventSessionId === sessionId && m !== method) {
-          clearTimeout(timer);
-          unsub();
-          reject(this.crashedSessions.get(sessionId));
-          return;
-        }
+      const unsub = this.onEvent((m, params) => {
         if (m !== method) return;
         try {
           if (opts.predicate && !opts.predicate(params as T)) return;
@@ -347,9 +328,6 @@ export class Session implements Transport {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error('Not connected. Call session.connect(...) first.'));
     }
-    const sessionId = isBrowserLevel(method) ? undefined : this.activeSessionId;
-    const crashed = sessionId && this.crashedSessions.get(sessionId);
-    if (crashed) return Promise.reject(crashed);
     const id = this.nextId++;
     const msg: Record<string, unknown> = { id, method, params: params ?? {} };
     if (this.activeSessionId && !isBrowserLevel(method)) {
@@ -357,7 +335,6 @@ export class Session implements Transport {
     }
     return new Promise((resolve, reject) => {
       this.pending.set(id, {
-        sessionId,
         resolve: (v) => {
           for (const fn of this.callResultListeners) {
             try { fn(method, params, v); } catch { /* ignore */ }
@@ -380,27 +357,10 @@ export class Session implements Transport {
       if (m.error) p.reject(new CdpError(m.error.code, m.error.message, m.error.data));
       else p.resolve(m.result);
     } else if (m.method) {
-      if (m.method === 'Inspector.targetCrashed' && typeof m.sessionId === 'string') {
-        const error = new RendererCrashedError(m.sessionId);
-        this.crashedSessions.set(m.sessionId, error);
-        for (const [id, pending] of this.pending) {
-          if (pending.sessionId !== m.sessionId) continue;
-          this.pending.delete(id);
-          pending.reject(error);
-        }
-      }
-      if (m.method === 'Inspector.targetReloadedAfterCrash') this.crashedSessions.delete(m.sessionId);
       for (const fn of this.eventListeners) {
         try { fn(m.method, m.params, m.sessionId); } catch { /* ignore */ }
       }
     }
-  }
-}
-
-export class RendererCrashedError extends Error {
-  constructor(public sessionId: string) {
-    super('Renderer crashed. Use Target.closeTarget, Target.createTarget, then session.use(). Verify previous submissions before retrying.');
-    this.name = 'RendererCrashedError';
   }
 }
 

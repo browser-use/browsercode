@@ -155,9 +155,6 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
     nativeRuntime: input.flags.experimentalNativeLlm,
     tools: resolveTools(input),
   })
-  if (!input.small && input.model.options.nativeWebSearch === true) {
-    params.options.include = [...new Set([...(params.options.include ?? []), "web_search_call.action.sources"])]
-  }
   delete params.options.nativeWebSearch
   // Codex parity: OpenAI Responses-family providers hardcode `strict: false`
   // on every function tool so MCP-sourced and dynamic schemas that don't

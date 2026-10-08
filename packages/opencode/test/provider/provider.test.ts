@@ -2059,10 +2059,10 @@ it.effect("opencode loader keeps paid models when auth exists", () =>
 )
 
 it.instance(
-  "configuration-only OpenAI gateway wraps the selected Responses model",
+  "configuration-only OpenAI gateway keeps screenshots inline without uploads",
   Effect.gen(function* () {
     yield* remove("OPENAI_API_KEY")
-    const receipt = { uploads: 0, deletes: 0, bodies: [] as Array<Record<string, unknown>> }
+    const receipt = { uploads: 0, deletes: 0, capabilities: 0, bodies: [] as Array<Record<string, unknown>> }
     const server = yield* Effect.acquireRelease(
       Effect.sync(() =>
         Bun.serve({
@@ -2073,8 +2073,10 @@ it.instance(
               receipt.deletes++
               return Response.json({ deleted: true })
             }
-            if (url.pathname.endsWith("/capability"))
+            if (url.pathname.endsWith("/capability")) {
+              receipt.capabilities++
               return Response.json({ supported: true, scope: "owned-default-selector" })
+            }
             if (url.pathname.endsWith("/image-files")) {
               receipt.uploads++
               return Response.json({ file_id: "file-owned", signature: "proof", expires_at: Date.now() / 1000 + 3600 })
@@ -2112,7 +2114,6 @@ it.instance(
     const provider = yield* Provider.Service
     const model = yield* provider.getModel(ProviderV2.ID.openai, ModelV2.ID.make("gateway-fixture"))
     const language = yield* provider.getLanguage(model)
-    expect(typeof (language as unknown as { closeImageFiles?: unknown }).closeImageFiles).toBe("function")
     const screenshot = Buffer.from("owned screenshot fixture").toString("base64")
     for (const turn of [1, 2, 3])
       yield* Effect.promise(() =>
@@ -2133,15 +2134,16 @@ it.instance(
           ],
         }),
       )
-    expect(receipt.uploads).toBe(1)
+    expect(receipt.uploads).toBe(0)
+    expect(receipt.capabilities).toBe(0)
     expect(receipt.bodies).toHaveLength(3)
     for (const body of receipt.bodies) {
       const serialized = JSON.stringify(body)
-      expect(serialized).toContain("file-owned")
-      expect(serialized).not.toContain(screenshot)
+      expect(serialized).not.toContain("file-owned")
+      expect(serialized).not.toContain("file_id")
+      expect(serialized).toContain(`data:image/png;base64,${screenshot}`)
       expect(serialized).toContain("high")
     }
-    yield* Effect.promise(() => (language as unknown as { closeImageFiles(): Promise<void> }).closeImageFiles())
-    expect(receipt.deletes).toBe(1)
+    expect(receipt.deletes).toBe(0)
   }),
 )

@@ -15,6 +15,8 @@ import { jsonSchema, tool as aiTool, type ModelMessage, type Tool } from "ai"
 import type { Plugin } from "@/plugin"
 import { mergeDeep } from "remeda"
 
+import { hostedSearchTools } from "./hosted-search"
+
 const OPENCODE_USER_AGENT = `opencode/${InstallationVersion}`
 const BROWSERCODE_USER_AGENT = `browsercode/${InstallationVersion}`
 
@@ -146,7 +148,17 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
     },
   )
 
-  const tools = resolveTools(input)
+  const tools = hostedSearchTools({
+    enabled: !input.small && input.model.options.nativeWebSearch === true,
+    npm: input.model.api.npm,
+    oauth: isOpenaiOauth,
+    nativeRuntime: input.flags.experimentalNativeLlm,
+    tools: resolveTools(input),
+  })
+  if (!input.small && input.model.options.nativeWebSearch === true) {
+    params.options.include = [...new Set([...(params.options.include ?? []), "web_search_call.action.sources"])]
+  }
+  delete params.options.nativeWebSearch
   // Codex parity: OpenAI Responses-family providers hardcode `strict: false`
   // on every function tool so MCP-sourced and dynamic schemas that don't
   // satisfy OpenAI's structured-outputs constraints still register.

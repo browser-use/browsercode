@@ -1,4 +1,3 @@
-import { imageFileRequest, withImageFiles } from "./image-files"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import os from "os"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
@@ -1159,7 +1158,6 @@ export interface Interface {
 }
 
 interface State {
-  imageFiles: Set<() => Promise<void>>
   models: Map<string, LanguageModelV3>
   providers: Record<ProviderV2.ID, Info>
   catalog: Record<ProviderV2.ID, Info>
@@ -1346,12 +1344,6 @@ const layer = Layer.effect(
 
         const providers: Record<ProviderV2.ID, Info> = {} as Record<ProviderV2.ID, Info>
         const languages = new Map<string, LanguageModelV3>()
-        const imageFiles = new Set<() => Promise<void>>()
-        yield* Effect.addFinalizer(() =>
-          Effect.promise(async () => {
-            await Promise.allSettled([...imageFiles].map((close) => close()))
-          }),
-        )
         const modelLoaders: {
           [providerID: string]: CustomModelLoader
         } = {}
@@ -1661,7 +1653,6 @@ const layer = Layer.effect(
 
         return {
           models: languages,
-          imageFiles,
           providers,
           catalog,
           sdk,
@@ -1761,7 +1752,7 @@ const layer = Layer.effect(
           if (combined) opts.signal = combined
 
           const res = await fetchFn(input, {
-            ...imageFileRequest(opts),
+            ...opts,
             // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
             timeout: false,
           }).finally(() => headerTimeoutCtl?.clear())
@@ -1777,47 +1768,6 @@ const layer = Layer.effect(
             name: model.providerID,
             ...options,
           })
-          if (
-            model.api.npm === "@ai-sdk/openai" &&
-            loaded.responses &&
-            typeof options.apiKey === "string" &&
-            typeof baseURL === "string"
-          ) {
-            const responses = loaded.responses.bind(loaded)
-            loaded.responses = (id: string) => {
-              const wrapped = withImageFiles(responses(id), { baseURL, apiKey: options.apiKey, fetch: options.fetch })
-              s.imageFiles.add(wrapped.closeImageFiles)
-              return wrapped
-            }
-            // Config-only providers can select the SDK default without a custom loader.
-            // OpenAI defaults to Responses; wrap that selector as well.
-            const languageModel = loaded.languageModel.bind(loaded)
-            loaded.languageModel = (id: string) => {
-              const wrapped = withImageFiles(languageModel(id), {
-                baseURL,
-                apiKey: options.apiKey,
-                fetch: options.fetch,
-              })
-              s.imageFiles.add(wrapped.closeImageFiles)
-              return wrapped
-            }
-          }
-          if (
-            model.api.npm === "@ai-sdk/anthropic" &&
-            typeof options.apiKey === "string" &&
-            typeof baseURL === "string"
-          ) {
-            const languageModel = loaded.languageModel.bind(loaded)
-            loaded.languageModel = (id: string) => {
-              const wrapped = withImageFiles(languageModel(id), {
-                baseURL,
-                apiKey: options.apiKey,
-                fetch: options.fetch,
-              })
-              s.imageFiles.add(wrapped.closeImageFiles)
-              return wrapped
-            }
-          }
           s.sdk.set(key, loaded)
           return loaded as SDK
         }

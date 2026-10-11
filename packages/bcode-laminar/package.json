@@ -23,7 +23,7 @@
     "@opentelemetry/resources": "2.9.0",
     "@opentelemetry/exporter-trace-otlp-grpc": "0.217.0",
     "@opentelemetry/exporter-trace-otlp-proto": "0.217.0",
-    "@grpc/grpc-js": "1.14.4"
+    "@grpc/grpc-js": "1.14.5"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",

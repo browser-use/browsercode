@@ -1,0 +1,16 @@
+packages/llm/src/provider-error.ts
+  h_e7a2b198222b93 33
+packages/llm/test/provider-error.test.ts
+  h_e7a2b198222b93 5,17,27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dabf2777979e89cd5e526979d8f13dd74b625dff",
+  "prompts": {},
+  "humans": {
+    "h_e7a2b198222b93": {
+      "author": "Gregor Žunič <36313686+gregpr07@users.noreply.github.com>"
+    }
+  }
+}

@@ -24,6 +24,17 @@ const emit = (method: string, params: unknown) => {
   server.publish(channel, JSON.stringify({ method, params }))
 }
 
+// A server that never answers CDP requests, so calls stay in-flight.
+const silentServer = Bun.serve({
+  port: 0,
+  fetch(req, srv) {
+    return srv.upgrade(req) ? undefined : new Response("nope", { status: 400 })
+  },
+  websocket: {
+    message() {},
+  },
+})
+
 beforeAll(async () => {
   await session.connect({ wsUrl: `ws://127.0.0.1:${server.port}/` })
 })
@@ -31,6 +42,7 @@ beforeAll(async () => {
 afterAll(() => {
   session.close()
   server.stop(true)
+  silentServer.stop(true)
 })
 
 test("waitFor resolves on a matching event, respecting the predicate", async () => {
@@ -144,6 +156,27 @@ test("invalidate before the socket exists rejects the in-flight connect", async 
   s.invalidate(new Error("retired by test"))
   await expect(connecting).rejects.toThrow("retired by test")
   expect(s.isConnected()).toBe(false)
+})
+
+// In-flight calls on an established connection: the socket's close listener
+// treats the socket as superseded once invalidate() clears it, so only
+// invalidate() itself can settle calls that are still awaiting a response.
+test("invalidate rejects an in-flight CDP call with the invalidation error", async () => {
+  const s = new Session()
+  await s.connect({ wsUrl: `ws://127.0.0.1:${silentServer.port}/` })
+  const call = s._call("Test.hold", {})
+  s.invalidate(new Error("retired by test"))
+  await expect(call).rejects.toThrow("retired by test")
+})
+
+test("invalidate rejects every in-flight CDP call, not just the first", async () => {
+  const s = new Session()
+  await s.connect({ wsUrl: `ws://127.0.0.1:${silentServer.port}/` })
+  const first = s._call("Test.hold", {})
+  const second = s._call("Test.holdToo", {})
+  s.invalidate(new Error("retired by test"))
+  await expect(first).rejects.toThrow("retired by test")
+  await expect(second).rejects.toThrow("retired by test")
 })
 
 test("invalidate while the socket is connecting closes it and rejects", async () => {

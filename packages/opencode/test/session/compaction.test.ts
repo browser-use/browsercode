@@ -707,6 +707,100 @@ describe("session.compaction.prune", () => {
     ),
   )
 
+  const screenshotResults = (count: number) =>
+    Effect.gen(function* () {
+      const ssn = yield* SessionNs.Service
+      const info = yield* ssn.create({})
+      const user = yield* ssn.updateMessage({
+        id: MessageID.ascending(),
+        role: "user",
+        sessionID: info.id,
+        agent: "build",
+        model: ref,
+        time: { created: Date.now() },
+      })
+      yield* ssn.updatePart({ id: PartID.ascending(), messageID: user.id, sessionID: info.id, type: "text", text: "task" })
+      const assistant: SessionV1.Assistant = {
+        id: MessageID.ascending(),
+        role: "assistant",
+        sessionID: info.id,
+        mode: "build",
+        agent: "build",
+        path: { cwd: "/", root: "/" },
+        cost: 0,
+        tokens: { output: 0, input: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ref.modelID,
+        providerID: ref.providerID,
+        parentID: user.id,
+        time: { created: Date.now() },
+      }
+      yield* ssn.updateMessage(assistant)
+      for (let i = 0; i < count; i++) {
+        yield* ssn.updatePart({
+          id: PartID.ascending(),
+          messageID: assistant.id,
+          sessionID: info.id,
+          type: "tool",
+          callID: crypto.randomUUID(),
+          tool: "bash",
+          state: {
+            status: "completed",
+            input: {},
+            output: "x".repeat(40_000),
+            title: "done",
+            metadata: {},
+            time: { start: Date.now(), end: Date.now() },
+            attachments: [
+              {
+                id: PartID.ascending(),
+                messageID: assistant.id,
+                sessionID: info.id,
+                type: "file",
+                mime: "image/png",
+                filename: "screenshot.png",
+                url: "data:image/png;base64,Zm9v",
+              },
+            ],
+          },
+        })
+      }
+      return info.id
+    })
+  const clearedParts = (id: SessionID) =>
+    Effect.gen(function* () {
+      const ssn = yield* SessionNs.Service
+      const msgs = yield* ssn.messages({ sessionID: id })
+      return msgs
+        .flatMap((msg) => msg.parts)
+        .filter((part) => part.type === "tool")
+        .map((part) => part.type === "tool" && part.state.status === "completed" && !!part.state.time.compacted)
+    })
+
+  itCompaction.instance(
+    "with prune_at, waits for the mark, then clears everything older than the latest media results at once",
+    Effect.gen(function* () {
+      const id = yield* screenshotResults(6)
+
+      expect(yield* SessionCompaction.use.prune({ sessionID: id, tokens: 10_000 })).toBe(false)
+      expect(yield* clearedParts(id)).toEqual([false, false, false, false, false, false])
+
+      expect(yield* SessionCompaction.use.prune({ sessionID: id, tokens: 60_000 })).toBe(true)
+      expect(yield* clearedParts(id)).toEqual([true, true, true, true, false, false])
+
+      expect(yield* SessionCompaction.use.prune({ sessionID: id, tokens: 90_000 })).toBe(false)
+    }).pipe(withCompaction({ config: cfg({ prune: true, prune_at: 50_000, keep_media: 2 }) })),
+  )
+
+  itCompaction.instance(
+    "without prune_at, the in-loop call does nothing",
+    Effect.gen(function* () {
+      const id = yield* screenshotResults(6)
+
+      expect(yield* SessionCompaction.use.prune({ sessionID: id, tokens: 200_000 })).toBe(false)
+      expect(yield* clearedParts(id)).toEqual([false, false, false, false, false, false])
+    }).pipe(withCompaction({ config: cfg({ prune: true }) })),
+  )
+
   it.live(
     "skips protected skill tool output",
     provideTmpdirInstance((dir) =>

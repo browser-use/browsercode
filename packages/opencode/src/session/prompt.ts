@@ -13,6 +13,7 @@ import { Provider } from "@/provider/provider"
 import { type Tool as AITool, tool, jsonSchema } from "ai"
 import type { JSONSchema7 } from "@ai-sdk/provider"
 import { SessionCompaction } from "./compaction"
+import { tokenCount } from "./overflow"
 import { SystemPrompt } from "./system"
 import { Instruction } from "./instruction"
 import { Plugin } from "../plugin"
@@ -1083,6 +1084,7 @@ const layer = Layer.effect(
         const ctx = yield* InstanceState.context
         let structured: unknown
         let step = 0
+        let afterTrim = false
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
         while (true) {
@@ -1142,6 +1144,17 @@ const layer = Layer.effect(
             break
           }
 
+          // A trim frees context the last finished message's usage does not show yet, so the next pass skips the
+          // overflow check instead of compacting on stale numbers.
+          const trimmed =
+            lastFinished && lastFinished.summary !== true
+            ? yield* compaction.prune({ sessionID, tokens: tokenCount(lastFinished.tokens) })
+            : false
+          if (trimmed) {
+            afterTrim = true
+            continue
+          }
+
           step++
           if (step === 1)
             yield* title({
@@ -1174,11 +1187,13 @@ const layer = Layer.effect(
           if (
             lastFinished &&
             lastFinished.summary !== true &&
+            !afterTrim &&
             (yield* compaction.isOverflow({ tokens: lastFinished.tokens, model }))
           ) {
             yield* compaction.create({ sessionID, agent: lastUser.agent, model: lastUser.model, auto: true })
             continue
           }
+          afterTrim = false
 
           const agent = yield* agents.get(lastUser.agent)
           if (!agent) {

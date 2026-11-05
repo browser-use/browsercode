@@ -30,6 +30,7 @@ const patterns = [
   /too many tokens/i,
   /token limit exceeded/i,
   /too many images (?:were )?provided/i,
+  /exceeded maximum number of images \(\d+\) allowed in the request/i,
 ]
 
 const exclusions = [/^(throttling error|service unavailable):/i, /rate limit/i, /too many requests/i]

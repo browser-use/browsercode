@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { isContextOverflow } from "../src"
 
 describe("provider error classification", () => {
-  test("classifies provider token limit messages as context overflow", () => {
+  test("classifies provider token and image limits as context overflow", () => {
     const messages = [
       "tokens in request more than max tokens allowed",
       '{"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}',
@@ -14,6 +14,7 @@ describe("provider error classification", () => {
       "Too many tokens",
       "Token limit exceeded",
       "Too many images were provided, we currently limit the number of images per conversation to 60",
+      "Exceeded maximum number of images (50) allowed in the request.",
     ]
 
     expect(messages.every(isContextOverflow)).toBe(true)
@@ -23,6 +24,7 @@ describe("provider error classification", () => {
     const messages = [
       "Throttling error: Too many tokens, please wait before trying again.",
       "Rate limit exceeded, please retry after 30 seconds.",
+      "Rate limit: Exceeded maximum number of images (50) allowed in the request.",
       "Too many requests. Please slow down.",
     ]
 

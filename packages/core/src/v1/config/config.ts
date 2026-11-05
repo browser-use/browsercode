@@ -154,6 +154,14 @@ export const Info = Schema.Struct({
       prune: Schema.optional(Schema.Boolean).annotate({
         description: "Enable pruning of old tool outputs (default: false)",
       }),
+      prune_at: Schema.optional(PositiveInt).annotate({
+        description:
+          "With prune, clear old tool output and media in one batch inside the loop once the context reaches this many tokens (default: prune only when a turn ends)",
+      }),
+      keep_media: Schema.optional(PositiveInt).annotate({
+        description:
+          "With prune_at, the latest tool results with screenshots or other media that stay whole; everything older is cleared (default: 2)",
+      }),
       tail_turns: Schema.optional(NonNegativeInt).annotate({
         description:
           "Number of recent user turns, including their following assistant/tool responses, to keep verbatim during compaction (default: 2)",

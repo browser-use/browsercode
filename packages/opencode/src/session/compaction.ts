@@ -27,6 +27,9 @@ export const Event = SessionCompactionEvent
 
 export const PRUNE_MINIMUM = 20_000
 export const PRUNE_PROTECT = 40_000
+const DEFAULT_KEEP_MEDIA = 2
+// Media is not part of the output text estimate, so a cleared screenshot counts as this many tokens.
+const MEDIA_TOKEN_ESTIMATE = 1_500
 const TOOL_OUTPUT_MAX_CHARS = 2_000
 const PRUNE_PROTECTED_TOOLS = ["skill"]
 const DEFAULT_TAIL_TURNS = 2
@@ -132,7 +135,7 @@ export interface Interface {
     tokens: SessionV1.Assistant["tokens"]
     model: Provider.Model
   }) => Effect.Effect<boolean>
-  readonly prune: (input: { sessionID: SessionID }) => Effect.Effect<void>
+  readonly prune: (input: { sessionID: SessionID; tokens?: number }) => Effect.Effect<boolean>
   readonly process: (input: {
     parentID: MessageID
     messages: SessionV1.WithParts[]
@@ -240,15 +243,21 @@ const layer = Layer.effect(
 
     // goes backwards through parts until there are PRUNE_PROTECT tokens worth of tool
     // calls, then erases output of older tool calls to free context space
-    const prune = Effect.fn("SessionCompaction.prune")(function* (input: { sessionID: SessionID }) {
+    // With `tokens` (the in-loop call) it only runs once prune_at is reached and clears everything older than the
+    // latest keep_media results with media, in one batch; the turn-end call keeps the token-window rules.
+    const prune = Effect.fn("SessionCompaction.prune")(function* (input: { sessionID: SessionID; tokens?: number }) {
       const cfg = yield* config.get()
-      if (!cfg.compaction?.prune) return
+      if (!cfg.compaction?.prune) return false
+      const trim = input.tokens !== undefined
+      if (trim && (cfg.compaction.prune_at === undefined || input.tokens! < cfg.compaction.prune_at)) return false
+      const keepMedia = cfg.compaction.keep_media ?? DEFAULT_KEEP_MEDIA
+      let media = 0
       yield* Effect.logInfo("pruning")
 
       const msgs = yield* session
         .messages({ sessionID: input.sessionID })
         .pipe(Effect.catchIf(NotFoundError.isInstance, () => Effect.succeed(undefined)))
-      if (!msgs) return
+      if (!msgs) return false
 
       let total = 0
       let pruned = 0
@@ -258,7 +267,7 @@ const layer = Layer.effect(
       loop: for (let msgIndex = msgs.length - 1; msgIndex >= 0; msgIndex--) {
         const msg = msgs[msgIndex]
         if (msg.info.role === "user") turns++
-        if (turns < 2) continue
+        if (!trim && turns < 2) continue
         if (msg.info.role === "assistant" && msg.info.summary) break loop
         for (let partIndex = msg.parts.length - 1; partIndex >= 0; partIndex--) {
           const part = msg.parts[partIndex]
@@ -266,10 +275,15 @@ const layer = Layer.effect(
           if (part.state.status !== "completed") continue
           if (PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue
           if (part.state.time.compacted) break loop
+          const attached = part.state.attachments?.filter((a) => MessageV2.isMedia(a.mime)).length ?? 0
+          if (trim && media < keepMedia) {
+            if (attached) media++
+            continue
+          }
           const estimate = Token.estimate(part.state.output)
           total += estimate
-          if (total <= PRUNE_PROTECT) continue
-          pruned += estimate
+          if (!trim && total <= PRUNE_PROTECT) continue
+          pruned += estimate + attached * MEDIA_TOKEN_ESTIMATE
           toPrune.push(part)
         }
       }
@@ -283,7 +297,9 @@ const layer = Layer.effect(
           }
         }
         yield* Effect.logInfo("pruned", { count: toPrune.length })
+        return true
       }
+      return false
     })
 
     const processCompaction = Effect.fn("SessionCompaction.process")(function* (input: {

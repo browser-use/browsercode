@@ -13,6 +13,7 @@ import { Provider } from "@/provider/provider"
 import { type Tool as AITool, tool, jsonSchema } from "ai"
 import type { JSONSchema7 } from "@ai-sdk/provider"
 import { SessionCompaction } from "./compaction"
+import { tokenCount } from "./overflow"
 import { SystemPrompt } from "./system"
 import { Instruction } from "./instruction"
 import { Plugin } from "../plugin"
@@ -1170,6 +1171,13 @@ const layer = Layer.effect(
             if (result === "stop") break
             continue
           }
+
+          if (
+            lastFinished &&
+            lastFinished.summary !== true &&
+            (yield* compaction.prune({ sessionID, tokens: tokenCount(lastFinished.tokens) }))
+          )
+            continue
 
           if (
             lastFinished &&

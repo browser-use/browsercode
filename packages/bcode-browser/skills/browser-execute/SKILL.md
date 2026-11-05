@@ -7,6 +7,8 @@ The `browser_execute` tool evaluates JavaScript against a connected browser `ses
 The snippet runs in-process; `session` is bound to a long-lived CDP `Session` that persists.
 There is no helper namespace, just `session`, `console`, and standard JS globals. 
 
+Each `browser_execute` call has its own timeout: 60s by default, with a hard 10-minute maximum. Timing out retires that call's CDP session, not the overall agent run. Split long work into short, observable checkpoints instead of spending the full limit in one call.
+
 Workspace: `<projectRoot>/.bcode/agent-workspace/`. Read/write your reusable scripts here.
 Skills: `{{SKILLS_DIR}}/`. Read-only browser execute reference docs.
 

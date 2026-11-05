@@ -283,7 +283,7 @@ const layer = Layer.effect(
           const estimate = Token.estimate(part.state.output)
           total += estimate
           if (!trim && total <= PRUNE_PROTECT) continue
-          pruned += estimate + attached * MEDIA_TOKEN_ESTIMATE
+          pruned += estimate + (trim ? attached * MEDIA_TOKEN_ESTIMATE : 0)
           toPrune.push(part)
         }
       }

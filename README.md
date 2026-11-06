@@ -61,6 +61,16 @@ BrowserCode supports any model you can reach with an API key, plus [every provid
 
 Use `/connect` in the TUI, or set provider API keys in your environment.
 
+For GPT-6 Astra, set `OPENAI_API_KEY` and select `openai/gpt-6-astra`:
+
+```bash
+bcode run -m openai/gpt-6-astra --variant high "Your task"
+```
+
+Supported reasoning variants: `low`, `medium`, `high`, `xhigh`, `max` (default: `medium`).
+Astra uses the Responses API for tool calls. This requires a build containing Astra support;
+the published `0.1.20` binary predates it.
+
 Recommended models from current BU Bench evals:
 
 - Best performance: `claude-opus-4-8`

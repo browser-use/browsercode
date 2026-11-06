@@ -584,6 +584,7 @@ function gpt5ChatReasoningEfforts(apiId: string) {
 // to strongest.
 function openaiReasoningEfforts(apiId: string, releaseDate: string) {
   const id = apiId.toLowerCase()
+  if (id === "gpt-6-astra") return ["low", "medium", "high", "xhigh", "max"]
   if (id.includes("deep-research")) return ["medium"]
   const chatEfforts = gpt5ChatReasoningEfforts(id)
   if (chatEfforts) return chatEfforts
@@ -1222,6 +1223,12 @@ export function options(input: {
   if (input.model.api.npm === "@ai-sdk/azure" && input.model.api.id.includes("gpt-5.5")) {
     result["reasoningSummary"] = "auto"
     return result
+  }
+
+  if (input.model.api.npm === "@ai-sdk/openai" && input.model.api.id === "gpt-6-astra") {
+    result["reasoningEffort"] = "medium"
+    result["reasoningSummary"] = "auto"
+    result["include"] = INCLUDE_ENCRYPTED_REASONING
   }
 
   if (input.model.api.id.includes("gpt-5") && !input.model.api.id.includes("gpt-5-chat")) {

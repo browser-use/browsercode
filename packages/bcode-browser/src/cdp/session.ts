@@ -194,8 +194,9 @@ export class Session implements Transport {
   /**
    * Permanently retire this Session object.
    *
-   * Invalidation rejects all future `connect`/`_call` attempts and closes the
-   * socket; `SessionStore.invalidate` removes the entry so a later lookup gets
+   * Invalidation rejects all future `connect`/`_call` attempts, rejects
+   * in-flight calls with the same error, and closes the socket;
+   * `SessionStore.invalidate` removes the entry so a later lookup gets
    * a fresh Session. `browser_execute` timeouts use scoped execution instead,
    * preserving this object and its browser connection for the next call.
    */
@@ -206,6 +207,11 @@ export class Session implements Transport {
     const ws = this.ws;
     this.ws = undefined;
     this.activeSessionId = undefined;
+    // Reject in-flight calls here: the socket's close listener treats it as
+    // superseded once `this.ws` is cleared, so it will not drain `pending`
+    // when the close event lands.
+    for (const [, p] of this.pending) p.reject(error);
+    this.pending.clear();
     try { ws?.close(); } catch { /* ignore */ }
   }
 

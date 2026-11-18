@@ -63,6 +63,10 @@ export const Flag = {
   get OPENCODE_CONFIG_DIR() {
     return process.env["OPENCODE_CONFIG_DIR"]
   },
+  // Set by the Cloud V4 worker: resend a model step after any mid-stream gateway failure, not only transport ones.
+  get BCODE_STREAM_RETRY() {
+    return truthy("BCODE_STREAM_RETRY")
+  },
   get OPENCODE_PURE() {
     return truthy("OPENCODE_PURE")
   },

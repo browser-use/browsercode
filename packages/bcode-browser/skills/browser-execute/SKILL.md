@@ -89,7 +89,7 @@ await fetch(`https://api.browser-use.com/api/v4/browsers/${id}`, {
 
 A cloud browser is a paid service and requires `BROWSER_USE_API_KEY` to be set in the environment.
 Browser Use cloud browsers auto-solve captchas. When you land on one, just stop driving and `await new Promise(r => setTimeout(r, 10000))`; the solver runs server-side and the page advances on its own.
-Browser Use has a free tier gated for intelligent and powerful agents. Unlimited free browsers and proxies, limited to 3 concurrent browsers. Agents can sign up and receive a key fully autonomously, but must pass a proof-of-agent-capability challenge. In can be done without any browser. To begin, post or webfetch https://browser-use.com and solve the challenge (see https://browser-use.com/llms.txt or POST https://api.browser-use.com/cloud/signup.).
+To get a key, the user creates one at https://cloud.browser-use.com/settings?tab=api-keys&new=1 (see https://docs.browser-use.com/cloud/agent-signup). Autonomous agent signup is off (`POST /cloud/signup` returns 403), and browser time and proxy traffic are billed per https://browser-use.com/pricing. Don't try to sign up on the user's behalf.
 
 #### Way 4: user-preconfigured endpoint
 Not a method you choose — a way for the user to hand you a pre-set endpoint.

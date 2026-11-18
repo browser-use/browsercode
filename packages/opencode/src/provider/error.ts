@@ -3,6 +3,7 @@ import { STATUS_CODES } from "http"
 import { iife } from "@/util/iife"
 import type { ProviderV2 } from "@opencode-ai/core/provider"
 import { isContextOverflow } from "@opencode-ai/llm"
+import { Flag } from "@opencode-ai/core/flag/flag"
 
 export class HeaderTimeoutError extends Error {
   public override readonly name = "ProviderHeaderTimeoutError"
@@ -100,12 +101,36 @@ export type ParsedStreamError =
       metadata?: Record<string, string>
     }
 
+// Cloud V4 gateway failures after the reply started, which the same route may serve on a resend.
+const TRANSPORT = /^(ReadError|ReadTimeout|RemoteProtocolError|APIConnectionError|ConnectError|ConnectTimeout)(?::|$)/
+// The gateway's own wording for a provider or stream failure; rejections and refusals carry other text or types.
+const GATEWAY_FAILURES = new Set([
+  "The model returned an error.",
+  "The model request timed out.",
+  "The model request is temporarily unavailable.",
+])
+
+function gatewayFailure(message: unknown): message is string {
+  return (
+    typeof message === "string" && Flag.BCODE_STREAM_RETRY && (TRANSPORT.test(message) || GATEWAY_FAILURES.has(message))
+  )
+}
+
+function streamFailed(message: string, responseBody: string): ParsedStreamError {
+  return { type: "api_error", message, isRetryable: true, responseBody, metadata: { code: "upstream_stream_failed" } }
+}
+
 export function parseStreamError(input: unknown): ParsedStreamError | undefined {
   const raw = json(input)
+  // Chat Completions SDKs pass on only the error message.
+  if (!raw && gatewayFailure(input)) return streamFailed(input, JSON.stringify(input))
   const body = typeof raw?.message === "string" ? (json(raw.message) ?? raw) : raw
   if (!body) return
 
   const responseBody = JSON.stringify(body)
+  // Anthropic SDKs pass on the error object of a mid-stream error event; these two types are server failures.
+  if ((body.type === "api_error" || body.type === "overloaded_error") && gatewayFailure(body.message))
+    return streamFailed(body.message, responseBody)
   const error =
     body.type === "error"
       ? body.error
@@ -144,20 +169,8 @@ export function parseStreamError(input: unknown): ParsedStreamError | undefined 
         responseBody,
       }
     case "upstream_stream_failed":
-      if (
-        typeof error.message !== "string" ||
-        !/^(ReadError|ReadTimeout|RemoteProtocolError|APIConnectionError|ConnectError|ConnectTimeout)(?::|$)/.test(
-          error.message,
-        )
-      )
-        return
-      return {
-        type: "api_error",
-        message: error.message,
-        isRetryable: true,
-        responseBody,
-        metadata: { code: "upstream_stream_failed" },
-      }
+      if (typeof error.message !== "string" || !(TRANSPORT.test(error.message) || gatewayFailure(error.message))) return
+      return streamFailed(error.message, responseBody)
     case "server_is_overloaded":
     case "server_error":
       return {

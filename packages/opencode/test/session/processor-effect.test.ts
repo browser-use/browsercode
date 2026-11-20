@@ -280,6 +280,31 @@ const outputRetryLLM = Layer.succeed(
 const outputRetryEnv = LayerNode.compile(root, [...replacements, [LLM.node, outputRetryLLM]])
 const itOutputRetry = testEffect(outputRetryEnv)
 
+function reasoningOnly(text: string) {
+  return Stream.make(
+    LLMEvent.stepStart({ index: 0 }),
+    LLMEvent.reasoningStart({ id: "reasoning-1" }),
+    LLMEvent.reasoningDelta({ id: "reasoning-1", text }),
+    LLMEvent.reasoningEnd({ id: "reasoning-1" }),
+    LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+    LLMEvent.finish({ reason: "stop" }),
+  )
+}
+
+const semanticRetryInputs: LLM.StreamInput[] = []
+const semanticRetryStreams: Stream.Stream<LLMEvent>[] = []
+const semanticRetryLLM = Layer.succeed(
+  LLM.Service,
+  LLM.Service.of({
+    stream: (input) => {
+      semanticRetryInputs.push(input)
+      return semanticRetryStreams.shift() ?? Stream.fail(new Error("missing semantic retry stream"))
+    },
+  }),
+)
+const semanticRetryEnv = LayerNode.compile(root, [...replacements, [LLM.node, semanticRetryLLM]])
+const itSemanticRetry = testEffect(semanticRetryEnv)
+
 const boot = Effect.fn("test.boot")(function* () {
   const processors = yield* SessionProcessor.Service
   const session = yield* Session.Service
@@ -518,6 +543,157 @@ it.live("session.processor effect tests capture reasoning from http mock", () =>
         expect(text?.text).toBe("done")
       }),
     { config: (url) => providerCfg(url) },
+  ),
+)
+
+itSemanticRetry.live("session.processor effect tests retry a reasoning-only response once", () =>
+  provideTmpdirInstance((dir) =>
+    Effect.gen(function* () {
+      const { processors, session } = yield* boot()
+      semanticRetryInputs.length = 0
+      semanticRetryStreams.length = 0
+      semanticRetryStreams.push(
+        reasoningOnly("unfinished"),
+        Stream.make(
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.textStart({ id: "text-1" }),
+          LLMEvent.textDelta({ id: "text-1", text: "done" }),
+          LLMEvent.textEnd({ id: "text-1" }),
+          LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+          LLMEvent.finish({ reason: "stop" }),
+        ),
+      )
+
+      const chat = yield* session.create({})
+      const parent = yield* user(chat.id, "reason")
+      const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+      const handle = yield* processors.create({
+        assistantMessage: msg,
+        sessionID: chat.id,
+        model: outputRetryModel,
+      })
+
+      const input = {
+        user: {
+          id: parent.id,
+          sessionID: chat.id,
+          role: "user",
+          time: parent.time,
+          agent: parent.agent,
+          model: { providerID: ref.providerID, modelID: ref.modelID },
+        } satisfies SessionV1.User,
+        sessionID: chat.id,
+        model: outputRetryModel,
+        agent: agent(),
+        system: [],
+        messages: [{ role: "user", content: "reason" }],
+        tools: {},
+      } satisfies LLM.StreamInput
+
+      const value = yield* handle.process(input)
+      const parts = yield* MessageV2.parts(msg.id)
+
+      expect(value).toBe("continue")
+      expect(semanticRetryInputs).toHaveLength(2)
+      expect(semanticRetryInputs[1]).toBe(semanticRetryInputs[0])
+      expect(parts.some((part) => part.type === "reasoning" && part.text === "unfinished")).toBe(true)
+      expect(parts.some((part) => part.type === "text" && part.text === "done")).toBe(true)
+      expect(handle.message.error).toBeUndefined()
+    }),
+  ),
+)
+
+itSemanticRetry.live("session.processor effect tests fail after two reasoning-only responses", () =>
+  provideTmpdirInstance((dir) =>
+    Effect.gen(function* () {
+      const { processors, session } = yield* boot()
+      semanticRetryInputs.length = 0
+      semanticRetryStreams.length = 0
+      semanticRetryStreams.push(reasoningOnly("one"), reasoningOnly("two"))
+
+      const chat = yield* session.create({})
+      const parent = yield* user(chat.id, "reason")
+      const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+      const handle = yield* processors.create({
+        assistantMessage: msg,
+        sessionID: chat.id,
+        model: outputRetryModel,
+      })
+
+      const value = yield* handle.process({
+        user: {
+          id: parent.id,
+          sessionID: chat.id,
+          role: "user",
+          time: parent.time,
+          agent: parent.agent,
+          model: { providerID: ref.providerID, modelID: ref.modelID },
+        } satisfies SessionV1.User,
+        sessionID: chat.id,
+        model: outputRetryModel,
+        agent: agent(),
+        system: [],
+        messages: [{ role: "user", content: "reason" }],
+        tools: {},
+      })
+
+      expect(value).toBe("stop")
+      expect(semanticRetryInputs).toHaveLength(2)
+      expect(handle.message.error).toMatchObject({
+        name: "APIError",
+        data: { message: "Model returned reasoning without an answer or tool call" },
+      })
+    }),
+  ),
+)
+
+itSemanticRetry.live("session.processor effect tests do not retry unterminated nonblank text", () =>
+  provideTmpdirInstance((dir) =>
+    Effect.gen(function* () {
+      const { processors, session } = yield* boot()
+      semanticRetryInputs.length = 0
+      semanticRetryStreams.length = 0
+      semanticRetryStreams.push(
+        Stream.make(
+          LLMEvent.stepStart({ index: 0 }),
+          LLMEvent.textStart({ id: "text-1" }),
+          LLMEvent.textDelta({ id: "text-1", text: "visible" }),
+          LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+          LLMEvent.finish({ reason: "stop" }),
+        ),
+      )
+
+      const chat = yield* session.create({})
+      const parent = yield* user(chat.id, "reason")
+      const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+      const handle = yield* processors.create({
+        assistantMessage: msg,
+        sessionID: chat.id,
+        model: outputRetryModel,
+      })
+
+      const value = yield* handle.process({
+        user: {
+          id: parent.id,
+          sessionID: chat.id,
+          role: "user",
+          time: parent.time,
+          agent: parent.agent,
+          model: { providerID: ref.providerID, modelID: ref.modelID },
+        } satisfies SessionV1.User,
+        sessionID: chat.id,
+        model: outputRetryModel,
+        agent: agent(),
+        system: [],
+        messages: [{ role: "user", content: "reason" }],
+        tools: {},
+      })
+      const parts = yield* MessageV2.parts(msg.id)
+
+      expect(value).toBe("continue")
+      expect(semanticRetryInputs).toHaveLength(1)
+      expect(parts.some((part) => part.type === "text" && part.text === "visible")).toBe(true)
+    }),
   ),
 )
 

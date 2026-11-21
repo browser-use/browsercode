@@ -127,6 +127,80 @@ const initialState: MockState = {
 }
 
 describe("ModelsDev Service", () => {
+  it.live("fills missing Astra metadata without changing the cached catalog", () =>
+    Effect.gen(function* () {
+      const catalog = { ...fixture, openai: { id: "openai", name: "OpenAI", env: ["OPENAI_API_KEY"], models: {} } }
+      yield* writeCache(catalog)
+      const state = yield* Ref.make(initialState)
+      const result = yield* provided(
+        state,
+        ModelsDev.Service.use((s) => s.get()),
+      )
+      expect(result.acme).toEqual(fixture.acme)
+      expect(result.openai.models["gpt-6-astra"]).toMatchObject({
+        reasoning: true,
+        temperature: false,
+        tool_call: true,
+        reasoning_options: [{ type: "effort", values: ["low", "medium", "high", "xhigh", "max"] }],
+        limit: { context: 1050000, input: 922000, output: 128000 },
+        cost: {
+          input: 10,
+          output: 50,
+          cache_read: 1,
+          cache_write: 12.5,
+          tiers: [{ tier: { type: "context", size: 272000 }, input: 20, output: 75, cache_read: 2, cache_write: 25 }],
+        },
+      })
+      expect(JSON.parse(yield* Effect.promise(() => readFile(cacheFile, "utf8")))).toEqual(catalog)
+      expect((yield* Ref.get(state)).calls).toEqual([])
+    }),
+  )
+
+  it.live("prefers Astra metadata from the catalog over the fallback", () =>
+    Effect.gen(function* () {
+      const catalog = {
+        openai: {
+          id: "openai",
+          name: "OpenAI",
+          env: [],
+          models: {
+            "gpt-6-astra": { ...fixture.acme.models["acme-1"], id: "gpt-6-astra", name: "Catalog Astra" },
+          },
+        },
+      }
+      yield* writeCache(catalog)
+      const state = yield* Ref.make(initialState)
+      expect(
+        yield* provided(
+          state,
+          ModelsDev.Service.use((s) => s.get()),
+        ),
+      ).toEqual(catalog)
+    }),
+  )
+
+  it.live("does not inject Astra into an explicitly configured catalog file", () =>
+    Effect.gen(function* () {
+      const catalog = { openai: { id: "openai", name: "OpenAI", env: [], models: {} } }
+      yield* writeCache(catalog)
+      const state = yield* Ref.make(initialState)
+      yield* Effect.acquireUseRelease(
+        Effect.sync(() => {
+          Flag.OPENCODE_MODELS_PATH = cacheFile
+        }),
+        () =>
+          provided(
+            state,
+            ModelsDev.Service.use((s) => s.get()),
+          ).pipe(Effect.tap((result) => Effect.sync(() => expect(result).toEqual(catalog)))),
+        () =>
+          Effect.sync(() => {
+            Flag.OPENCODE_MODELS_PATH = undefined
+          }),
+      )
+    }),
+  )
+
   it.live("get() returns providers from disk when cache file exists", () =>
     Effect.gen(function* () {
       yield* writeCache(fixture)

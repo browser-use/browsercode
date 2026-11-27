@@ -295,7 +295,9 @@ const layer = Layer.effect(
         }
 
         const usePatch =
-          input.modelID.includes("gpt-") && !input.modelID.includes("oss") && !input.modelID.includes("gpt-4")
+          (input.modelID === "gpt" || input.modelID.includes("gpt-")) &&
+          !input.modelID.includes("oss") &&
+          !input.modelID.includes("gpt-4")
         if (tool.id === ApplyPatchTool.id) return usePatch
         if (tool.id === EditTool.id || tool.id === WriteTool.id) return !usePatch
 

@@ -24,20 +24,28 @@ import { Reference } from "@opencode-ai/core/reference"
 import { MCP } from "@/mcp"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 
+// The model id that picks the prompt and edit tools. A configured alias whose API id names no known model
+// (a gateway brand such as bu-4.0) names the model it runs on in family.
+export function behaviourID(model: Provider.Model) {
+  const id = model.api.id.toLowerCase()
+  const known = ["muse-spark", "gpt", "o1", "o3", "gemini-", "claude", "trinity", "kimi"].some((name) => id.includes(name))
+  return model.family && !known ? model.family : model.api.id
+}
+
 export function provider(model: Provider.Model) {
-  if (model.api.id.includes("muse-spark")) return [PROMPT_META]
-  if (model.api.id.includes("gpt-4") || model.api.id.includes("o1") || model.api.id.includes("o3"))
-    return [PROMPT_BEAST]
-  if (model.api.id.includes("gpt")) {
-    if (model.api.id.includes("codex")) {
+  const id = behaviourID(model)
+  if (id.includes("muse-spark")) return [PROMPT_META]
+  if (id.includes("gpt-4") || id.includes("o1") || id.includes("o3")) return [PROMPT_BEAST]
+  if (id.includes("gpt")) {
+    if (id.includes("codex")) {
       return [PROMPT_CODEX]
     }
     return [PROMPT_GPT]
   }
-  if (model.api.id.includes("gemini-")) return [PROMPT_GEMINI]
-  if (model.api.id.includes("claude")) return [PROMPT_ANTHROPIC]
-  if (model.api.id.toLowerCase().includes("trinity")) return [PROMPT_TRINITY]
-  if (model.api.id.toLowerCase().includes("kimi")) return [PROMPT_KIMI]
+  if (id.includes("gemini-")) return [PROMPT_GEMINI]
+  if (id.includes("claude")) return [PROMPT_ANTHROPIC]
+  if (id.toLowerCase().includes("trinity")) return [PROMPT_TRINITY]
+  if (id.toLowerCase().includes("kimi")) return [PROMPT_KIMI]
   return [PROMPT_DEFAULT]
 }
 

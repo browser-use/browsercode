@@ -20,7 +20,7 @@ RULES = [
 	(
 		'URL built from a host read',
 		re.compile(
-			r'''//[^"'`\n]*(\{[^}]*|%s[^"'`\n]*["'`]\s*,[^)\n]*)\b(Host|host|hostname|Hostname|netloc|origin)\b'''
+			r'''//[^"'`\n]*(\{[^}]*|(%s|\{\})[^"'`\n]*["'`]\s*(,|%|\.format\()[^\n]*|["'`]\s*\+\s*[\w.]*)\b(Host|host|hostname|Hostname|netloc|origin)\b'''
 		),
 		True,
 	),
@@ -48,7 +48,7 @@ def main() -> int:
 	for failure in failures:
 		print(failure)
 	if failures:
-		print('\nBuild CDP URLs with the CDP URL helper, so the token query stays (glut docs/cdp-url-auth-plan.md 3.7).')
+		print('\nBuild CDP URLs with the CDP URL helper, so the token query stays (section 3.7 of https://github.com/browser-use/glut/blob/plan/cdp-url-auth/docs/cdp-url-auth-plan.md).')
 	return 1 if failures else 0
 
 

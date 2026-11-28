@@ -141,7 +141,8 @@ export class Session implements Transport {
     return new Promise<void>((res, rej) => {
       // A host such as the cloud worker names itself on each dial, so the browser edge can tell it from customers.
       const userAgent = process.env.BU_CDP_USER_AGENT;
-      const ws = new WebSocket(wsUrl, userAgent ? { headers: { 'User-Agent': userAgent } } : undefined);
+      // Bun reads headers from this argument, but packages that use the DOM types declare only protocols.
+      const ws = new WebSocket(wsUrl, userAgent ? ({ headers: { 'User-Agent': userAgent } } as unknown as string[]) : undefined);
       const previousWs = this.ws;
       this.ws = ws;
       this.activeSessionId = undefined;

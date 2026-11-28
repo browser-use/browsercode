@@ -10,7 +10,10 @@ HELPERS = {
 	'tools/cdp-url-guard/check.py',
 }
 # Each entry is a path and a text that the flagged line holds.
-ALLOWED = []
+ALLOWED = [
+	# The end-to-end tests build the local Playwright server URL, not a CDP URL.
+	('packages/app/e2e/performance/timeline-stability/fixture.ts', 'server: `http://${process.env.PLAYWRIGHT_SERVER_HOST'),
+]
 CODE = re.compile(r'\.(go|py|ts|tsx|js|jsx|mjs|cjs|html)$')
 TEST = re.compile(r'(_test\.go|\.test\.\w+|\.spec\.\w+|(^|/)test_[^/]*\.py|_test\.py)$|(^|/)(tests?|__tests__|testdata|fixtures)/')
 RULES = [
@@ -20,7 +23,7 @@ RULES = [
 	(
 		'URL built from a host read',
 		re.compile(
-			r'''//[^"'`\n]*(\{[^}]*|(%s|\{\})[^"'`\n]*["'`]\s*(,|%|\.format\()[^\n]*|["'`]\s*\+\s*[\w.]*)\b(Host|host|hostname|Hostname|netloc|origin)\b'''
+			r'''//[^"'`\n]*(\{[^}]*|(%s|\{\})[^"'`\n]*["'`]\s*(,|%|\.format\()[^\n]*|["'`]\s*\+\s*[\w.\[\]()]*)((?<![A-Za-z])(host|hostname|netloc|origin)|Host|HostName|Hostname|Netloc|Origin|(?<![A-Za-z])(HOST|HOSTNAME|NETLOC|ORIGIN))\b'''
 		),
 		True,
 	),

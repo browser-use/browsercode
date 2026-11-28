@@ -139,7 +139,7 @@ export class Session implements Transport {
     // open a late socket for a retired Session.
     if (this.invalidatedError) return Promise.reject(this.invalidatedError);
     return new Promise<void>((res, rej) => {
-      // A host such as the cloud worker names itself on each dial, so the browser edge can tell it from customers.
+      // The cloud worker names each dial, so the browser edge can tell it from customer sockets.
       const userAgent = process.env.BU_CDP_USER_AGENT;
       // Bun reads headers from this argument, but packages that use the DOM types declare only protocols.
       const ws = new WebSocket(wsUrl, userAgent ? ({ headers: { 'User-Agent': userAgent } } as unknown as string[]) : undefined);

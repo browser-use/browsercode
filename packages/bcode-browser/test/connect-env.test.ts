@@ -10,9 +10,13 @@ import { Session } from "../src/cdp/session"
 
 // Tiny WS echo server. Accept the upgrade so `connect()` resolves; the
 // CDP protocol itself is never exercised in this test.
+// Each WebSocket dial, as [path with query, User-Agent].
+const dials: Array<[string, string | null]> = []
 const server = Bun.serve({
   port: 0,
   fetch(req, srv) {
+    const url = new URL(req.url)
+    dials.push([url.pathname + url.search, req.headers.get("user-agent")])
     if (srv.upgrade(req)) return
     return new Response("nope", { status: 400 })
   },
@@ -96,3 +100,18 @@ test("BU_CDP_WS pointing at a dead port surfaces the error (no fallback to OS sc
     expect(threw).toBe(true)
   })
 })
+
+for (const userAgent of ["browser-use-internal/v4-worker", undefined])
+  test(`BU_CDP_USER_AGENT=${userAgent} sets the dial User-Agent, and the dial keeps the token query`, async () => {
+    await withEnv({ BU_CDP_WS: `${wsUrl}?token=t`, BU_CDP_URL: undefined, BU_CDP_USER_AGENT: userAgent }, async () => {
+      const session = new Session()
+      try {
+        await session.connect()
+      } finally {
+        session.close()
+      }
+      const [path, sent] = dials.at(-1)!
+      expect(path).toBe("/?token=t")
+      expect(sent).toBe(userAgent ?? null)
+    })
+  })

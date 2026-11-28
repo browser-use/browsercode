@@ -139,7 +139,9 @@ export class Session implements Transport {
     // open a late socket for a retired Session.
     if (this.invalidatedError) return Promise.reject(this.invalidatedError);
     return new Promise<void>((res, rej) => {
-      const ws = new WebSocket(wsUrl);
+      // A host such as the cloud worker names itself on each dial, so the browser edge can tell it from customers.
+      const userAgent = process.env.BU_CDP_USER_AGENT;
+      const ws = new WebSocket(wsUrl, userAgent ? { headers: { 'User-Agent': userAgent } } : undefined);
       const previousWs = this.ws;
       this.ws = ws;
       this.activeSessionId = undefined;

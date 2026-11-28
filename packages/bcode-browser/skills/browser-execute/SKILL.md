@@ -73,7 +73,10 @@ const r = await fetch("https://api.browser-use.com/api/v4/browsers", {
 })
 // Additional options: fetch https://docs.browser-use.com/cloud/openapi/v4.json
 const { id, cdpUrl, liveUrl } = await r.json()
-const ver = await fetch(`${cdpUrl}/json/version`).then(r => r.json())
+// cdpUrl holds a secret token in its query, so keep the query and never build it from the id.
+const versionUrl = new URL(cdpUrl)
+versionUrl.pathname = "/json/version"
+const ver = await fetch(versionUrl).then(r => r.json())
 await session.connect({ wsUrl: ver.webSocketDebuggerUrl })
 console.log("liveUrl for the user to watch:", liveUrl)
 ```
